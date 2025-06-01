@@ -17,38 +17,38 @@ import kotlin.math.min
 
 class ItemManager(
     var item: TradedItem,
-    var count: Int,
+    var sellPerTime: Int,
     var price: Double,
     var stock: MutableMap<String, Int>,
     var registries: RegistryWrapper.WrapperLookup
 ) {
     constructor(
         item: ItemStackArgument,
-        count: Int,
+        sellPerTime: Int,
         price: Double,
         stock: MutableMap<String, Int> = mutableMapOf<String, Int>(),
         registries: RegistryWrapper.WrapperLookup
     ): this(
         TradedItem(
             Registries.ITEM.getEntry(Registries.ITEM.getKey(item.item).get()).get(),
-            count,
-            ComponentPredicate.of(item.createStack(count, false).components),
-            item.createStack(count, false)
+            sellPerTime,
+            ComponentPredicate.of(item.createStack(sellPerTime, false).components),
+            item.createStack(sellPerTime, false)
         ),
-        count, price, stock,
+        sellPerTime, price, stock,
         registries)
 
     @Serializable
     data class ItemData(
         val itemNbt: String,
-        val count: Int,
+        val sellPerTime: Int,
         val price: Double,
         val stock: MutableMap<String, Int>
     )
 
     fun toJsonString(): String {
         val nbt = item.itemStack.encode(registries).asString()
-        val itemData = ItemData(nbt, count, price, stock)
+        val itemData = ItemData(nbt, this@ItemManager.sellPerTime, price, stock)
         return Json.encodeToString(itemData)
     }
 
@@ -108,11 +108,11 @@ class ItemManager(
                         ItemManager(
                             TradedItem(
                                 Registries.ITEM.getEntry(Registries.ITEM.getKey(it.item).get()).get(),
-                                itemData.count,
+                                itemData.sellPerTime,
                                 ComponentPredicate.of(it.components),
                                 it
                             ),
-                            itemData.count,
+                            itemData.sellPerTime,
                             itemData.price,
                             itemData.stock,
                             registries

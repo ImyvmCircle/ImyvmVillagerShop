@@ -45,7 +45,7 @@ public abstract class VirtualMerchantScreenHandlerMixin {
                 if (moneyShouldTake != null && playerBalance < moneyShouldTake * 100) {
                     var barrierItem = Registries.ITEM.getOrEmpty(Identifier.tryParse("minecraft:barrier")).orElseThrow();
                     var barrierItemStack = barrierItem.getDefaultStack();
-                    barrierItemStack.set(DataComponentTypes.CUSTOM_NAME, Translator.INSTANCE.tr("shop.buy.failed.lack"));
+                    barrierItemStack.set(DataComponentTypes.CUSTOM_NAME, Translator.INSTANCE.tr("shop.buy.money.lack"));
                     barrierItemStack.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true);
                     this.merchantInventory.setStack(1, barrierItemStack);
                 }

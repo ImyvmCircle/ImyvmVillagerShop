@@ -39,23 +39,37 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
             ) {
                 if (shopEntity?.type == ShopType.SELL || shopEntity?.type == ShopType.REFRESHABLE_SELL) { // Sell
                     val imyvmCurry = this.merchantInventory.getStack(0)
-                    val moneyShouldTake = imyvmCurry.get(DataComponentTypes.CUSTOM_DATA)?.copyNbt()?.getDouble("price") ?: return false
+                    val moneyShouldTakeOnce =
+                        imyvmCurry.get(DataComponentTypes.CUSTOM_DATA)?.copyNbt()?.getDouble("price") ?: return false
                     val stock = this.selectedTrade.maxUses - this.selectedTrade.uses
                     val sellItem = this.merchantInventory.getStack(2)
-                    if (stock <= 0) {
+                    if (stock < sellItem.count) {
                         this.merchantInventory.removeStack(0)
                         player.sendMessage(tr("shop.buy.stock.lack"))
                         return false
                     }
                     val economyData = EconomyData(player)
                     val playerBalance = economyData.getMoney()
-                    val tradeTimes = if (action == SlotActionType.PICKUP && playerBalance >= moneyShouldTake) {
+                    if (playerBalance < moneyShouldTakeOnce) {
+                        this.merchantInventory.removeStack(0)
+                        player.sendMessage(tr("shop.buy.money.lack", moneyShouldTakeOnce))
+                        return false
+                    }
+                    val tradeTimes = if (action == SlotActionType.PICKUP && playerBalance >= moneyShouldTakeOnce) {
                         1
                     } else if (action == SlotActionType.QUICK_MOVE) {
-                        if (playerBalance/moneyShouldTake >= 64) {
-                            64
+                        if (playerBalance / moneyShouldTakeOnce >= 64) {
+                            if (stock >= sellItem.count * 64) {
+                                64
+                            } else {
+                                stock / sellItem.count
+                            }
                         } else {
-                            (playerBalance/moneyShouldTake).toInt()
+                            if ((playerBalance / moneyShouldTakeOnce).toInt() < stock) {
+                                (playerBalance / moneyShouldTakeOnce).toInt()
+                            } else {
+                                stock / sellItem.count
+                            }
                         }
                     } else {
                         return false
@@ -74,23 +88,48 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
                             } - tradeNumber
                         }
                     }
-                    economyData.addMoney((-moneyShouldTake * 100 * tradeTimes).toLong())
+                    val tradeMoney = moneyShouldTakeOnce * tradeTimes * 100
+                    economyData.addMoney((-tradeMoney).toLong())
                     sellItem.count = tradeNumber
                     player.inventory.offerOrDrop(sellItem)
                     repeat(tradeNumber) { this.selectedTrade.use() }
-                    player.sendMessage(tr("shop.buy.success", moneyShouldTake*tradeTimes, tradeNumber, this.selectedTrade?.sellItem?.toHoverableText()))
+                    player.sendMessage(
+                        tr(
+                            "shop.buy.success",
+                            moneyShouldTakeOnce * tradeTimes,
+                            tradeNumber,
+                            this.selectedTrade?.sellItem?.toHoverableText()
+                        )
+                    )
+                    val shopOwnerEntity = shopEntity?.owner?.let { playerEntity.server.playerManager.getPlayer(it) }
+                    shopOwnerEntity?.let { shopOwner ->
+                        val shopOwnerEconomyData = EconomyData(shopOwner)
+                        shopOwnerEconomyData.addMoney(tradeMoney.toLong())
+                        shopOwner.sendMessage(
+                            tr(
+                                "shop.sell.success",
+                                playerEntity.name,
+                                moneyShouldTakeOnce * tradeTimes,
+                                tradeNumber,
+                                this.selectedTrade?.sellItem?.toHoverableText()
+                            )
+                        )
+                    } ?: {
+                        shopEntity?.income += tradeMoney
+                    }
                     this.sendUpdate()
                 } else { // Buy
                     val imyvmCurry = this.merchantInventory.getStack(2)
-                    val moneyShouldGet = imyvmCurry.get(DataComponentTypes.CUSTOM_DATA)?.copyNbt()?.getDouble("price") ?: return false
+                    val moneyShouldGetOnce =
+                        imyvmCurry.get(DataComponentTypes.CUSTOM_DATA)?.copyNbt()?.getDouble("price") ?: return false
                     val stock = this.selectedTrade.maxUses - this.selectedTrade.uses
                     val buyItem = this.merchantInventory.getStack(0)
                     val economyData = EconomyData(player)
                     val playerBalance = economyData.getMoney()
-                    val sellTimes = if (action == SlotActionType.PICKUP && playerBalance >= moneyShouldGet) {
+                    val sellTimes = if (action == SlotActionType.PICKUP && playerBalance >= moneyShouldGetOnce) {
                         1
                     } else if (action == SlotActionType.QUICK_MOVE) {
-                        (player.inventory.count(buyItem.item)/buyItem.count).toInt()
+                        (player.inventory.count(buyItem.item) / buyItem.count)
                     } else {
                         return false
                     }
@@ -102,9 +141,9 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
                             stock
                         } - sellNumber
                     }
-                    economyData.addMoney((moneyShouldGet * 100 * sellTimes).toLong())
+                    economyData.addMoney((moneyShouldGetOnce * 100 * sellTimes).toLong())
                     repeat(sellNumber) { this.selectedTrade.use() }
-                    player.sendMessage(tr("shop.purchase.success", moneyShouldGet*sellTimes))
+                    player.sendMessage(tr("shop.purchase.success", moneyShouldGetOnce * sellTimes))
                     this.sendUpdate()
                 }
                 shopEntity?.update()
@@ -179,7 +218,8 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
             nbtTemp.putDouble("price", items.price)
             val localDate = LocalDate.now()
             nbtTemp.putString("securityCode",
-                Random(localDate.year + localDate.dayOfYear + localDate.monthValue + items.count + stock + Random.nextInt()).nextInt().toString()
+                Random(localDate.year + localDate.dayOfYear + localDate.monthValue + items.sellPerTime + stock + Random.nextInt()).nextInt()
+                    .toString()
             )
             currencyItemStack.set(DataComponentTypes.CUSTOM_DATA, NbtComponent.of(nbtTemp))
             val currencyItem = TradedItem(
@@ -190,7 +230,7 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
             val sellItem = items.item
             if (type == 0) {
                 val tradeOffer =
-                    if (stock >= items.count) {
+                    if (stock >= items.sellPerTime) {
                         TradeOffer(currencyItem, sellItem.itemStack, stock, 0 ,0f)
                     } else {
                         TradeOffer(currencyItem, sellItem.itemStack, 0, 0, 0f)

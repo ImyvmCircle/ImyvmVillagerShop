@@ -85,7 +85,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                         getItemStackArgument(context, "item"),
                                                         getInteger(context, "quantitySoldEachTime"),
                                                         getDouble(context, "price"),
-                                                        mutableMapOf<String, Int>(Pair("default", 0)),
+                                                        mutableMapOf(Pair("default", 0)),
                                                         context.source.registryManager
                                                     ),
                                                     player)
@@ -106,7 +106,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                             getItemStackArgument(context, "item"),
                                                             getInteger(context, "quantitySoldEachTime"),
                                                             getDouble(context, "price"),
-                                                            mutableMapOf<String, Int>(Pair("default", stock)),
+                                                            mutableMapOf(Pair("default", stock)),
                                                             context.source.registryManager
                                                         ),
                                                         player
@@ -365,7 +365,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                             player.inventory.count(getItemStackArgument(context, "item").item)
                                         )
                                         tradeNeedChange.stock["default"]?.let { stock ->
-                                            if (stock == -1) stockToAdd+1
+                                            if (stock == -1) stockToAdd + 1
                                             tradeNeedChange.stock["default"] = stock + stockToAdd
                                         }
                                         shop.update()
@@ -402,12 +402,13 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                 .then(literal("add")
                     .then(argument("shopName", string())
                         .then(argument("item", itemStack(registryAccess))
-                            .then(argument("quantitySoldEachTime", integer(1))
+                            .then(
+                                argument("numberSoldEachTime", integer(1))
                                 .then(argument("price", doubleArg(0.1))
                                     .executes { context ->
                                         val newTradedItem = ItemManager(
                                             getItemStackArgument(context, "item"),
-                                            getInteger(context, "quantitySoldEachTime"),
+                                            getInteger(context, "numberSoldEachTime"),
                                             getDouble(context, "price"),
                                             registries = context.source.registryManager
                                         )
@@ -460,7 +461,8 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                 .then(literal("change")
                     .then(argument("shopName", string())
                         .then(argument("item", itemStack(registryAccess))
-                            .then(argument("quantitySoldEachTime", integer(1))
+                            .then(
+                                argument("numberSoldEachTime", integer(1))
                                 .then(argument("price", doubleArg(0.1))
                                     .executes { context ->
                                         val player = context.source.player!!
@@ -472,9 +474,9 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
 
                                         shop?.let {
                                             val tradedItemNeedChange = it.getTradedItem(getItemStackArgument(context, "item"))
-                                            tradedItemNeedChange?.let {
-                                                it.count = getInteger(context, "quantitySoldEachTime")
-                                                it.price = getDouble(context, "price")
+                                            tradedItemNeedChange?.let { item ->
+                                                item.sellPerTime = getInteger(context, "numberSoldEachTime")
+                                                item.price = getDouble(context, "price")
                                                 player.sendMessage(tr("commands.shop.item.change.success"))
                                             } ?: player.sendMessage(tr("commands.shop.item.none"))
                                             it.update()

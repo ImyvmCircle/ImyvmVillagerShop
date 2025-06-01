@@ -99,7 +99,7 @@ class ShopEntity(
             player.sendMessage(
                 tr("commands.shopinfo.items",
                     item.item.itemStack.toHoverableText(),
-                    item.count,
+                    item.sellPerTime,
                     item.price,
                     item.stock
                 )
@@ -208,7 +208,7 @@ class ShopEntity(
             }
 
             for (i in itemList) {
-                if ((i.item == tradeItem.item) && i.price.toLong() <= tradeItem.price / tradeItem.count * 0.8) {
+                if ((i.item == tradeItem.item) && i.price.toLong() <= tradeItem.price / tradeItem.sellPerTime * 0.8) {
                     player.sendMessage(tr("commands.shop.create.item.price.toolow", tradeItem.item.itemStack.toHoverableText()))
                     return false
                 }
