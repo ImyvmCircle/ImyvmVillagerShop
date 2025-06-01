@@ -2,6 +2,7 @@ package com.imyvm.villagerShop.commands
 
 import com.imyvm.hoki.util.CommandUtil
 import com.imyvm.villagerShop.VillagerShopMain
+import com.imyvm.villagerShop.VillagerShopMain.Companion.shopEntityList
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.ShopService.Companion.rangeSearch
 import com.imyvm.villagerShop.apis.Translator.tr
@@ -113,7 +114,10 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                     )
                                                     newShop.playerShopCreate()
                                                     player.sendMessage(tr("commands.shop.create.success"))
-                                                    newShop.spawnOrRespawn(context.source.world)
+                                                    val newShopEntity = newShop.spawnOrRespawn(context.source.world)
+                                                    synchronized(shopEntityList) {
+                                                        shopEntityList[newShopEntity.id] = newShopEntity
+                                                    }
                                                 }
                                                 addPendingOperation(context, action)
                                             }
@@ -203,6 +207,12 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                         shop.posY = newPos.y
                                         shop.posZ = newPos.z
                                         shopDBService.update(it)
+                                        val shopEntity = shopEntityList.getOrDefault(it.id, null)
+                                        shopEntity?.setPos(
+                                            newPos.x.toDouble() + 0.5,
+                                            newPos.y.toDouble() + 1,
+                                            newPos.z.toDouble() + 0.5
+                                        )
                                         player.sendMessage(tr("commands.execute.success"))
                                     } ?: player.sendMessage(tr("commands.shops.none"))
                                     1
@@ -237,13 +247,19 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                     .then(argument("id", integer(1))
                         .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manager",2))
                         .executes { context ->
+                            val shopId = getInteger(context, "id")
                             val shop = shopDBService.readById(
-                                getInteger(context,"id"),
+                                shopId,
                                 context.source.registryManager
                             )
                             val player = context.source.player!!
                             shop?.let {
                                 val action = {
+                                    val shopEntity = shopEntityList.getOrDefault(shopId, null)
+                                    shopEntity?.kill()
+                                    synchronized(shopEntityList) {
+                                        shopEntityList.remove(getInteger(context, "id"))
+                                    }
                                     shop.delete()
                                     player.sendMessage(tr("commands.deleteshop.ok"))
                                 }
@@ -262,8 +278,13 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                             ).singleOrNull()
                             shop?.let {
                                 val action = {
-                                    offerItemToPlayer(player, it.items)
+                                    val shopEntity = shopEntityList.getOrDefault(it.id, null)
+                                    shopEntity?.kill()
+                                    synchronized(shopEntityList) {
+                                        shopEntityList.remove(it.id)
+                                    }
                                     shop.delete()
+                                    offerItemToPlayer(player, it.items)
                                     player.sendMessage(tr("commands.deleteshop.ok"))
                                 }
                                 addPendingOperation(context, action)

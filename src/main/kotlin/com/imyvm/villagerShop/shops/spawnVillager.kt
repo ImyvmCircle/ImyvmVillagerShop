@@ -11,9 +11,10 @@ fun spawnInvulnerableVillager(
     shopName: String,
     type: Int = 0,
     id: Int
-) {
+): VillagerEntity {
     val villager = VillagerEntity(EntityType.VILLAGER, world)
-    villager.setPos(pos.x.toDouble(), pos.y.toDouble() + 1, pos.z.toDouble())
+    villager.id = id
+    villager.setPos(pos.x.toDouble() + 0.5, pos.y.toDouble() + 1, pos.z.toDouble() + 0.5)
     villager.isInvulnerable = true
     villager.breedingAge = -1
     villager.isBaby = false
@@ -23,4 +24,5 @@ fun spawnInvulnerableVillager(
     villager.addCommandTag("type:${type}")
     villager.customName = Text.of(shopName)
     world.spawnEntity(villager)
+    return villager
 }

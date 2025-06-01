@@ -16,6 +16,7 @@ import com.mojang.brigadier.exceptions.SimpleCommandExceptionType
 import net.minecraft.command.argument.BlockPosArgumentType.getBlockPos
 import net.minecraft.command.argument.ItemStackArgument
 import net.minecraft.command.argument.ItemStackArgumentType.getItemStackArgument
+import net.minecraft.entity.passive.VillagerEntity
 import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
@@ -116,8 +117,14 @@ class ShopEntity(
         update()
     }
 
-    fun spawnOrRespawn(world: ServerWorld) {
-        spawnInvulnerableVillager(BlockPos(this.posX, this.posY, this.posZ), world, this.shopname, this.type.ordinal, this.id)
+    fun spawnOrRespawn(world: ServerWorld): VillagerEntity {
+        return spawnInvulnerableVillager(
+            BlockPos(this.posX, this.posY, this.posZ),
+            world,
+            this.shopname,
+            this.type.ordinal,
+            this.id
+        )
     }
 
     fun getTradedItem(tradeItem: ItemStackArgument): ItemManager? {

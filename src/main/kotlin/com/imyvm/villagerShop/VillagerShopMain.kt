@@ -12,17 +12,14 @@ import com.imyvm.villagerShop.items.ItemManager
 import com.imyvm.villagerShop.shops.ShopEntity.Companion.shopDBService
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.player.UseEntityCallback
-import net.minecraft.entity.Entity
-import net.minecraft.entity.Entity.RemovalReason
 import net.minecraft.entity.passive.VillagerEntity
 import net.minecraft.registry.RegistryWrapper
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.util.ActionResult
-import net.minecraft.util.math.Box
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -43,21 +40,24 @@ class VillagerShopMain : ModInitializer {
 		ServerLifecycleEvents.SERVER_STARTED.register { server ->
 			itemList.addAll(purchaseItemLoad(server))
 			scheduleDailyTask(server.registryManager)
-			ServerChunkEvents.CHUNK_LOAD.register { serverWorld, chunk ->
-				val xStart = chunk.pos.startX
-				val zStart = chunk.pos.startZ
-				val xEnd = chunk.pos.endX
-				val zEnd = chunk.pos.endZ
-
-				val chunkBox = Box(xStart.toDouble(), 0.0, zStart.toDouble(), xEnd.toDouble(), serverWorld.height.toDouble(), zEnd.toDouble())
-
-				serverWorld.getEntitiesByClass(VillagerEntity::class.java, chunkBox, Entity::isAlive).forEach {
-					if (it.commandTags.contains("VillagerShop")) {
-						val id = it.commandTags.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull() ?: -1
-						it.remove(RemovalReason.KILLED)
-						if (id != -1) {
-							val shopEntity = shopDBService.readById(id, serverWorld.registryManager)
-							shopEntity?.spawnOrRespawn(serverWorld)
+		}
+		ServerEntityEvents.ENTITY_LOAD.register { entity, serverWorld ->
+			if (entity is VillagerEntity && entity.commandTags.contains("VillagerShop")) {
+				serverWorld.server.execute {
+					val id =
+						entity.commandTags.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull()
+							?: -1
+					if (id != -1) {
+						val shopEntity = shopDBService.readById(id, serverWorld.registryManager)
+						shopEntity?.let { shopEntity ->
+							entity.setPos(
+								shopEntity.posX.toDouble() + 0.5,
+								shopEntity.posY.toDouble() + 1,
+								shopEntity.posZ.toDouble() + 0.5
+							)
+							synchronized(shopEntityList) {
+								shopEntityList[shopEntity.id] = entity
+							}
 						}
 					}
 				}
@@ -97,6 +97,7 @@ class VillagerShopMain : ModInitializer {
 		val CONFIG: ModConfig = ModConfig()
 		val itemList: MutableList<ItemManager> = mutableListOf()
 		val guiSet: ConcurrentHashMap.KeySetView<VillagerEntity, Boolean> = ConcurrentHashMap.newKeySet()
+		val shopEntityList: MutableMap<Int, VillagerEntity> = mutableMapOf()
 	}
 
 	private fun purchaseItemLoad(server: MinecraftServer): MutableList<ItemManager> {
