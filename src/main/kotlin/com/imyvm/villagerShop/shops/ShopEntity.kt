@@ -1,26 +1,22 @@
 package com.imyvm.villagerShop.shops
 
 import com.imyvm.villagerShop.VillagerShopMain.Companion.itemList
-import com.imyvm.villagerShop.apis.DbSettings
+import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.EconomyData
-import com.imyvm.villagerShop.apis.ShopService
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.Translator.tr
-import com.imyvm.villagerShop.apis.checkParameterLegality
 import com.imyvm.villagerShop.items.ItemManager
-import com.mojang.brigadier.arguments.DoubleArgumentType.getDouble
-import com.mojang.brigadier.arguments.IntegerArgumentType.getInteger
 import com.mojang.brigadier.arguments.StringArgumentType.getString
 import com.mojang.brigadier.context.CommandContext
-import com.mojang.brigadier.exceptions.SimpleCommandExceptionType
+import net.minecraft.command.CommandRegistryAccess
 import net.minecraft.command.argument.BlockPosArgumentType.getBlockPos
 import net.minecraft.command.argument.ItemStackArgument
-import net.minecraft.command.argument.ItemStackArgumentType.getItemStackArgument
 import net.minecraft.entity.passive.VillagerEntity
 import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.math.BlockPos
+import java.util.*
 import kotlin.math.pow
 
 class ShopEntity(
@@ -33,6 +29,7 @@ class ShopEntity(
     var admin: Int,
     var type: ShopType,
     val owner: String,
+    val ownerUUID: UUID,
     var items: MutableList<ItemManager>,
     var income: Double
 ) {
@@ -49,18 +46,20 @@ class ShopEntity(
         admin = 1,
         type = type,
         owner = context.source.player!!.nameForScoreboard,
+        ownerUUID = context.source.player!!.uuid,
         items = mutableListOf(),
         income = 0.0
-    ) {
-        val sellItemListString = getString(context, "items")
-        val (compare, itemList, errorMessage) = checkParameterLegality(sellItemListString, context.source.registryManager)
-        when (compare) {
-            0 -> throw SimpleCommandExceptionType(tr("commands.shop.create.no_item")).create()
-            1 -> throw SimpleCommandExceptionType(tr("commands.shop.create.count_not_equal")).create()
-            2 -> throw SimpleCommandExceptionType(tr("commands.shop.create.nbt_error", errorMessage)).create()
-            else -> this.items = itemList
-        }
-    }
+    )
+//    ) {
+//        val sellItemListString = getString(context, "items")
+//        val (compare, itemList, errorMessage) = checkParameterLegality(sellItemListString, context.source.registryManager)
+//        when (compare) {
+//            0 -> throw SimpleCommandExceptionType(tr("commands.shop.create.no_item")).create()
+//            1 -> throw SimpleCommandExceptionType(tr("commands.shop.create.count_not_equal")).create()
+//            2 -> throw SimpleCommandExceptionType(tr("commands.shop.create.nbt_error", errorMessage)).create()
+//            else -> this.items = itemList
+//        }
+//    }
 
     constructor(
         context: CommandContext<ServerCommandSource>,
@@ -74,6 +73,7 @@ class ShopEntity(
         admin = 0,
         type = ShopType.SELL,
         owner = context.source.player!!.nameForScoreboard,
+        ownerUUID = context.source.player!!.uuid,
         items = mutableListOf(),
         income = 0.0
     )
@@ -147,43 +147,27 @@ class ShopEntity(
     }
 
     companion object {
-        val shopDBService = ShopService(DbSettings.db)
-        fun checkCanAddNewShop(
-            context: CommandContext<ServerCommandSource>
+        fun checkCanCreateShop(
+            shopName: String,
+            playerName: String,
+            registryAccess: CommandRegistryAccess
+        ): Boolean {
+            return shopDBService.readByShopName(shopName, playerName, registryAccess).singleOrNull() == null
+        }
+
+        fun checkPlayerMoney(
+            player: ServerPlayerEntity,
+            registryAccess: CommandRegistryAccess
         ): Long {
-            val player = context.source.player!!
+            val shopCount = shopDBService.readByOwner(player.nameForScoreboard, registryAccess).size
+            val amount = if (shopCount < 3) {
+                40L
+            } else {
+                2.0.pow(shopCount - 1).toLong()
+            } * 100
+
             val sourceData = EconomyData(player)
-            val shopName = getString(context, "shopName")
-
-            if (shopDBService.readByShopName(shopName, player.nameForScoreboard, context.source.registryManager).singleOrNull() != null) {
-                player.sendMessage(tr("commands.shop.create.failed.duplicate_name"))
-                return 0
-            }
-
-            val item = getItemStackArgument(context, "item")
-            val quantitySoldEachTime = getInteger(context, "quantitySoldEachTime")
-            val price = getDouble(context, "price")
-
-            for (i in itemList) {
-                if ((i.item == item.item) && i.price.toLong() <= price / quantitySoldEachTime * 0.8) {
-                    player.sendMessage(tr("commands.shop.create.item.price.toolow", item.item.name))
-                    return 0
-                }
-            }
-
-            val shopCount = shopDBService.readByOwner(player.nameForScoreboard, context.source.registryManager).size
-            val amount =
-                if (shopCount < 3 ) {
-                    40L
-                } else {
-                    2.0.pow(shopCount - 1).toLong()
-                } * 100
-
-            if (!sourceData.isLargerThanTheAmountOfMoney(amount)) {
-                player.sendMessage(tr("commands.shop.create.failed.lack"))
-                return 0
-            }
-            return amount
+            return if (sourceData.isLargerThanTheAmountOfMoney(amount)) amount else 0L
         }
 
         fun calculateAndTakeMoney(
@@ -232,7 +216,7 @@ class ShopEntity(
 
         fun getDefaultShop(): ShopEntity {
             return ShopEntity(
-                -1, "default", 0, 0, 0, "default", 0, ShopType.SELL, "default", mutableListOf(), 0.0
+                -1, "default", 0, 0, 0, "default", 0, ShopType.SELL, "default", UUID.randomUUID(), mutableListOf(), 0.0
             )
         }
     }

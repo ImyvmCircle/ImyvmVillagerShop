@@ -14,7 +14,11 @@ fun spawnInvulnerableVillager(
 ): VillagerEntity {
     val villager = VillagerEntity(EntityType.VILLAGER, world)
     villager.id = id
-    villager.setPos(pos.x.toDouble() + 0.5, pos.y.toDouble() + 1, pos.z.toDouble() + 0.5)
+    villager.setPos(
+        pos.x.toDouble() + if (pos.x >= 0) 0.5 else -0.5,
+        pos.y.toDouble() + 1,
+        pos.z.toDouble() + if (pos.z >= 0) 0.5 else -0.5
+    )
     villager.isInvulnerable = true
     villager.breedingAge = -1
     villager.isBaby = false

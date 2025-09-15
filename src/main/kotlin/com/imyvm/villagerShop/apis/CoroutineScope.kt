@@ -10,11 +10,11 @@ import java.util.concurrent.TimeUnit
 
 val coroutineContext = SupervisorJob() + Dispatchers.Default
 val customScope = CoroutineScope(coroutineContext)
-fun coroutineScope(context: CommandContext<ServerCommandSource>) {
+fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long = 61) {
     val playerUUID = context.source.player!!.uuid
     customScope.launch {
-        val result = withTimeoutOrNull(TimeUnit.SECONDS.toMillis(61)) {
-            delay(TimeUnit.SECONDS.toMillis(60))
+        val result = withTimeoutOrNull(TimeUnit.SECONDS.toMillis(duration)) {
+            delay(TimeUnit.SECONDS.toMillis(duration-1))
             pendingOperations.remove(playerUUID)
             "Cancel ok"
         }

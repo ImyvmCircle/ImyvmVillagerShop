@@ -81,9 +81,14 @@ class ItemManager(
         fun offerItemToPlayer(player: PlayerEntity, itemToGiveList: MutableList<ItemManager>) {
             val inventory = player.inventory
             for (item in itemToGiveList) {
-                inventory.offerOrDrop(
-                    ItemStack(item.item.item, item.stock["default"]!!)
-                )
+                if (item.stock["default"] == null || item.stock["default"] == 0) {
+                    continue
+                }
+                else {
+                    inventory.offerOrDrop(
+                        ItemStack(item.item.item, item.stock["default"]!!)
+                    )
+                }
             }
         }
 

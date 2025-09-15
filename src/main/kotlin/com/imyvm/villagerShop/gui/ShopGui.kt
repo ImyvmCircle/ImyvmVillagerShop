@@ -1,11 +1,11 @@
 package com.imyvm.villagerShop.gui
 
 import com.imyvm.villagerShop.VillagerShopMain
+import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.EconomyData
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.Translator.tr
 import com.imyvm.villagerShop.shops.ShopEntity
-import com.imyvm.villagerShop.shops.ShopEntity.Companion.shopDBService
 import eu.pb4.sgui.api.ClickType
 import eu.pb4.sgui.api.gui.MerchantGui
 import net.minecraft.component.DataComponentTypes

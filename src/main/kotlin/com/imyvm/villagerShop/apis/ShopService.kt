@@ -1,27 +1,23 @@
 package com.imyvm.villagerShop.apis
 
+import com.imyvm.villagerShop.VillagerShopMain.Companion.LOGGER
+import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.Translator.tr
 import com.imyvm.villagerShop.items.ItemManager.Companion.restoreItemList
 import com.imyvm.villagerShop.items.ItemManager.Companion.storeItemList
 import com.imyvm.villagerShop.shops.ShopEntity
 import com.imyvm.villagerShop.shops.ShopEntity.Companion.sendMessageByType
-import com.imyvm.villagerShop.shops.ShopEntity.Companion.shopDBService
 import com.mojang.brigadier.context.CommandContext
 import net.minecraft.registry.RegistryWrapper
+import net.minecraft.server.MinecraftServer
 import net.minecraft.server.command.ServerCommandSource
 import org.jetbrains.exposed.dao.id.IntIdTable
-import org.jetbrains.exposed.sql.Database
-import org.jetbrains.exposed.sql.ResultRow
-import org.jetbrains.exposed.sql.SchemaUtils
+import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.and
-import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.insert
-import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.update
+import java.util.*
 
-class ShopService(private val database: Database) {
+class ShopService(private val database: Database, private val server: MinecraftServer) {
     object Shops : IntIdTable() {
         val shopname = varchar("shopname", 20)
         val posX = integer("posX")
@@ -29,15 +25,22 @@ class ShopService(private val database: Database) {
         val posZ = integer("posZ")
         val world = varchar("world", 100)
         val owner = varchar("owner", 40)
+        val ownerUUID = uuid("ownerUUID").default(UUID.fromString("00000000-0000-4000-8000-000000000000"))
         val admin = integer("admin")
         val type = integer("type")
         val items = text("items")
         val income = double("income")
     }
 
+    object DataBaseInfo : IntIdTable() {
+        val dbVersion = integer("dbVersion").uniqueIndex()
+        val appliedAt = varchar("applied_at", 50)
+    }
+
     init {
         transaction(database) {
-            SchemaUtils.create(Shops)
+            SchemaUtils.create(Shops, DataBaseInfo)
+            applyMigrations()
         }
     }
 
@@ -52,6 +55,7 @@ class ShopService(private val database: Database) {
             resultRow[Shops.admin],
             ShopType.entries[resultRow[Shops.type]],
             resultRow[Shops.owner],
+            resultRow[Shops.ownerUUID],
             restoreItemList(resultRow[Shops.items], registries),
             resultRow[Shops.income]
         )
@@ -69,6 +73,7 @@ class ShopService(private val database: Database) {
             it[posZ] = shop.posZ
             it[world] = shop.world
             it[owner] = shop.owner
+            it[ownerUUID] = shop.ownerUUID
             it[admin] = shop.admin
             it[type] = shop.type.ordinal
             it[items] = storeItemList(shop.items)
@@ -141,6 +146,7 @@ class ShopService(private val database: Database) {
             it[posZ] = shop.posZ
             it[world] = shop.world
             it[owner] = shop.owner
+            it[ownerUUID] = shop.ownerUUID
             it[admin] = shop.admin
             it[type] = shop.type.ordinal
             it[items] = storeItemList(shop.items)
@@ -150,6 +156,63 @@ class ShopService(private val database: Database) {
 
     fun delete(id: Int) = dbQuery {
         Shops.deleteWhere { Shops.id.eq(id) }
+    }
+
+    private fun getCurrentDbVersion(): Int = dbQuery {
+        DataBaseInfo.selectAll().maxByOrNull { it[DataBaseInfo.dbVersion] }?.get(DataBaseInfo.dbVersion) ?: 0
+    }
+
+    private fun applyMigration(version: Int, migrationName: String, migration: () -> Unit) = dbQuery {
+        val exists = DataBaseInfo.selectAll()
+            .where { DataBaseInfo.dbVersion eq version }
+            .count() > 0
+        if (!exists) {
+            LOGGER.info("Applying migration $migrationName ($version)")
+            migration()
+            DataBaseInfo.insert {
+                it[dbVersion] = version
+                it[appliedAt] = Date().toString()
+            }
+            LOGGER.info("Migration $migrationName ($version) applied")
+        } else {
+            LOGGER.info("Migration $migrationName ($version) already applied, skipping")
+        }
+    }
+
+    private fun applyMigrations() {
+        val currentVersion = getCurrentDbVersion()
+        if (currentVersion < 1) {
+            applyMigration(1, "Add ownerUUID column") {
+                migrateToAddOwnerUUID()
+            }
+        }
+        // Add future migrations here
+    }
+
+    private fun migrateToAddOwnerUUID() {
+        val currentColumns = SchemaUtils.statementsRequiredForDatabaseMigration(Shops)
+        val needsOwnerUUIDColumn = currentColumns.any { statement ->
+            statement.contains("ownerUUID", ignoreCase = true) && statement.contains("ADD", ignoreCase = true)
+        }
+
+        if (needsOwnerUUIDColumn) {
+            SchemaUtils.createMissingTablesAndColumns(Shops)
+
+            val allShops = Shops.selectAll().map { row ->
+                row[Shops.id].value to row[Shops.owner]
+            }
+
+            LOGGER.info("Migrating ${allShops.size} shops to add ownerUUID")
+
+            allShops.forEach { (id, playerName) ->
+                val playerUUID = server.userCache?.findByName(playerName)?.get()?.id ?: UUID.fromString("00000000-0000-4000-8000-000000000000")
+                Shops.update({ Shops.id eq id }) {
+                    it[ownerUUID] = playerUUID
+                }
+            }
+
+            LOGGER.info("Migration to add ownerUUID completed")
+        }
     }
 
     companion object {
@@ -169,7 +232,7 @@ class ShopService(private val database: Database) {
                 if (i.contains(":")) {
                     val (condition, parameter) = i.split(":", limit = 2)
                     val temp = when (condition) {
-                        "id" -> mutableListOf<ShopEntity?>(shopDBService.readById(parameter.toInt(), registries))
+                        "id" -> mutableListOf(shopDBService.readById(parameter.toInt(), registries))
                         "shopname" -> shopDBService.readByShopName(parameter, registries = registries)
                         "owner" -> shopDBService.readByOwner(parameter, registries)
                         "location" -> shopDBService.readByLocation(parameter, 0, 0, 0, player.world.asString(), registries)
@@ -179,7 +242,7 @@ class ShopService(private val database: Database) {
                                 "${player.pos.x},${player.pos.y},${player.pos.z}",
                                 rangeX, rangeY, rangeZ ,player.world.asString(), registries)
                         }
-                        else -> mutableListOf<ShopEntity?>()
+                        else -> mutableListOf()
                     }
                     if (!results.containsAll(temp)) results.addAll(temp)
                 } else {

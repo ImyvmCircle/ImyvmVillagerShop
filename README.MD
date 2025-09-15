@@ -37,9 +37,42 @@ core {
 
 ## 二、商店创建
 
-### 1.玩家商店
+### 1.定义商店基础信息
 
-玩家可以使用指令`/villagerShop create shop <shopname> <x y z> <item> <quantitySoldEachTime> <price>`[^1]创建商店，并扣除一定的货币。  
+玩家可以使用指令`/villagerShop create shop <shopname> <x y z>`定义商店基础信息，并开启商店创建流程。  
+管理员可以使用指令`/villagerShop create adminShop <shopName> <x y z> <type>`来创建系统商店。  
+`type`参数可以设置为`UNLIMITED_BUY`或`REFRESHABLE_BUY`来创建收购商店，其他情况均为出售商店。
+
+### 2.为商店添加商品
+
+在完成商店基本信息的定义之后，玩家可以使用
+`/villagerShop create addItem <item> <quantitySoldEachTime> <price>`
+来为商店添加商品，`item`参数请使用`minecraft:item_stack`，如`minecraft:stick[foo=bar]`。  
+若为系统商店，还存在一个特殊的`stock`参数，代表单个玩家可以购买的数量。
+若商店类型为`UNLIMITED_BUY`或`SELL`，则`stock`参数不起作用。  
+若为`REFRESHABLE_BUY`或`REFRESHABLE_SELL`，则`stock`参数代表单个玩家每天可以出售给系统商店（或从系统商店购买）的数量。  
+
+如果错误地添加了物品，可以使用
+`/villagerShop create removeItem <item>`
+来删除该商品。  
+
+> [!NOTE]
+> 在创建过程中，物品会即时地从玩家背包中扣除。删除商品时，物品会返还给玩家。  
+
+### 3.完成商店创建
+
+在添加完所有商品后，玩家可以使用
+`/villagerShop create submit`[^1]
+来完成商店创建，并扣除一定的货币。  
+在提交之前，你也可以使用
+`/villagerShop create preview`
+来预览商店的所有信息。  
+若不想创建商店，可以使用
+`/villagerShop create cancel`
+来取消商店创建，并返还所有已添加的商品。  
+
+### 4.商店创建费用
+
 货币的花费会随着玩家拥有商店数量的增加而增加，函数表达式为:
 
 ```math
@@ -50,37 +83,25 @@ f(x)
 \end{cases}
 ```
 
-**注意**
-
-- 商店刚创建或商品刚添加时默认会使用背包内**所有**（无法选择是否添加）已有物品进行免费补货。
+> [!IMPORTANT]
+> - 商店刚创建或商品刚添加时默认会使用背包内**所有**（无法选择是否添加）已有物品进行免费补货。
 你也在创建完成后额外使用`/villagerShop item addStock <shopName> <item> [quantity]`来对商店中**存在的商品**进行“补货”，
 `quantity`是一个可选参数，若不填则默认消耗背包内所有特定物品。  
 同时，补货需要消耗一定的货币，计算公式如下:
-
-```math
-f(x) = p \times c \times t
-```
-
 > ```math
-> p为设置价格，c为补货数量，t为税率，默认为0.1\%
+> f(x) = p \times c \times t
 > ```
+> p为设置价格，c为补货数量，t为税率，默认为0.1\%
 
-- 同一玩家创建的商店**不允许**名称相同，当个商店的商品**数量上限为7个物品**，价格下限**不低于**服务器设置的物价或系统商店物价。
-- 创建商店时的`quantitySoldEachTime`参数代表用`price`的钱可以买到`quantitySoldEachTime`个数的物品  
+> [!NOTE]
+> - 同一玩家创建的商店**不允许**名称相同，当个商店的商品**数量上限为7个物品**，价格下限**不低于**服务器设置的物价或系统商店物价。
+> - 创建商店时的`quantitySoldEachTime`参数代表用`price`的钱可以买到`quantitySoldEachTime`个数的物品  
 举个栗子，比如我使用
 `/villagerShop create shop DreamRain 0 0 0 minecraft:cherry_leaves 2 100`
 创建了一个名为`DreamRain`并出售`樱花树叶`的商店。
 那么，我可以使用`100`货币买到`2`个`樱花树叶`。而不是商店中`樱花树叶`的库存为`2`。
-- 所有商店都有一个唯一的`id`标识符，并且永远不可能重复。
-- 目前商品支持保存NBT。
-
-### 2.系统商店
-
-管理员可以使用指令
-`/villagerShop create adminShop <shopName> <x y z> <type> <item1> <count>:<price>:[stock] <item2> <count>:<price>:[stock] ... <item_n> <count>:<price>:[stock]`
-来创建系统商店。  
-系统商店库存**无限**，但是可以使用玩家商店中的`stock`参数来限制单个玩家的购买数量。  
-`stock`可以为空，如果为空，则默认为不限量。
+> - 所有商店都有一个唯一的`id`标识符，并且永远不可能重复。
+> - 目前商品支持保存NBT。
 
 ## 三、商店管理
 
@@ -115,17 +136,9 @@ owner参数可以使用玩家**创建商店时**的ID。
 可以使用`/villagerShop manager inquire <id>`获取特定商店的详细信息。    
 管理员在征得玩家以及管理组同意的情况下，可以使用
 `/villagerShop setAdmin <shopnumber>`[^1]
-来将该商店转化为系统商店。**注意，该操作也不会返还库存。**  
+来将该商店转化为系统商店。**注意，该操作也不会返还库存。**
 
-## 四、收购相关
-
-仅管理员可创建收购商店，在创建时将`<type>`参数设置为`UNLIMITED_BUY`即可创建**无限**收购指定物品的商店。  
-或者将`<type>`参数设置为`REFRESHABLE_BUY`即可每日对限制进行更新。  
-收购价格由使用者自行设定。  
-收购也可以使用stock参数来设定每天每人可以出售给系统商店的数量。  
-`stock`可以为空，如果为空，则默认为不限量。  
-
-## 五、其他
+## 四、其他
 
 ### TODO：  
  - [x] 商店创建或物品添加时即消耗背包内的物品补货  

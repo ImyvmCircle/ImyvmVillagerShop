@@ -1,10 +1,11 @@
 package com.imyvm.villagerShop.apis
 
 import com.imyvm.economy.EconomyMod
+import com.imyvm.economy.PlayerData
 import net.minecraft.server.network.ServerPlayerEntity
 
 class EconomyData(player: ServerPlayerEntity) {
-    val playerEconomyData = EconomyMod.data.getOrCreate(player)
+    val playerEconomyData: PlayerData = EconomyMod.data.getOrCreate(player)
 
     fun getMoney(): Long {
         return playerEconomyData.money

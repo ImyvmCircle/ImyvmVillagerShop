@@ -9,7 +9,7 @@ import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.text.Text
 import java.util.function.Supplier
 
-fun taxRateChange(context: CommandContext<ServerCommandSource>, taxrate:Double): Int {
+fun taxRateChange(context: CommandContext<ServerCommandSource>, taxrate: Double): Int {
     TAX_RESTOCK.setValue(taxrate)
     CONFIG.loadAndSave()
     val textSupplier = Supplier<Text> { tr("commands.imyvm_villager_shop.tax_change.success") }

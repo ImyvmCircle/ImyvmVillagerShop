@@ -1,5 +1,6 @@
 package com.imyvm.villagerShop
 
+import com.imyvm.villagerShop.apis.DbSettings
 import com.imyvm.villagerShop.apis.EconomyData
 import com.imyvm.villagerShop.apis.ModConfig
 import com.imyvm.villagerShop.apis.ShopService
@@ -9,7 +10,6 @@ import com.imyvm.villagerShop.commands.register
 import com.imyvm.villagerShop.events.PlayerConnectCallback
 import com.imyvm.villagerShop.gui.ShopGui
 import com.imyvm.villagerShop.items.ItemManager
-import com.imyvm.villagerShop.shops.ShopEntity.Companion.shopDBService
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents
@@ -19,6 +19,7 @@ import net.minecraft.entity.passive.VillagerEntity
 import net.minecraft.registry.RegistryWrapper
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
+import net.minecraft.text.Text
 import net.minecraft.util.ActionResult
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -37,6 +38,9 @@ class VillagerShopMain : ModInitializer {
 		CommandRegistrationCallback.EVENT.register { dispatcher, commandRegistryAccess, _ ->
 			register(dispatcher, commandRegistryAccess)
 		}
+        ServerLifecycleEvents.SERVER_STARTING.register { server ->
+            shopDBService = ShopService(DbSettings.db, server)
+        }
 		ServerLifecycleEvents.SERVER_STARTED.register { server ->
 			itemList.addAll(purchaseItemLoad(server))
 			scheduleDailyTask(server.registryManager)
@@ -55,6 +59,7 @@ class VillagerShopMain : ModInitializer {
 								shopEntity.posY.toDouble() + 1,
 								shopEntity.posZ.toDouble() + 0.5
 							)
+							entity.customName = Text.of(shopEntity.shopname)
 							synchronized(shopEntityList) {
 								shopEntityList[shopEntity.id] = entity
 							}
@@ -98,6 +103,8 @@ class VillagerShopMain : ModInitializer {
 		val itemList: MutableList<ItemManager> = mutableListOf()
 		val guiSet: ConcurrentHashMap.KeySetView<VillagerEntity, Boolean> = ConcurrentHashMap.newKeySet()
 		val shopEntityList: MutableMap<Int, VillagerEntity> = mutableMapOf()
+        lateinit var shopDBService: ShopService
+            private set
 	}
 
 	private fun purchaseItemLoad(server: MinecraftServer): MutableList<ItemManager> {
