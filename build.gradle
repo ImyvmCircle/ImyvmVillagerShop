@@ -5,6 +5,7 @@ plugins {
 	id "maven-publish"
 	id "org.jetbrains.kotlin.jvm"
 	id "org.jetbrains.kotlin.plugin.serialization" version "2.0.20-Beta2"
+    id "com.gradleup.shadow" version "9.1.0"
 }
 
 java {
@@ -71,6 +72,10 @@ repositories {
 
 }
 
+configurations {
+    shadow
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft("com.mojang:minecraft:${project.minecraft_version}")
@@ -88,24 +93,48 @@ dependencies {
 	modImplementation("net.fabricmc:fabric-language-kotlin:${project.fabric_kotlin_version}")
 	modImplementation("me.lucko:fabric-permissions-api:${project.fabric_permissions_api_version}")
 	modImplementation("eu.pb4:sgui:${project.sgui_version}")
-	modImplementation "io.github.ladysnake:PlayerAbilityLib:${project.pal_version}"
-	include "io.github.ladysnake:PlayerAbilityLib:${project.pal_version}"
-	implementation("org.jetbrains.exposed:exposed-core:${project.exposed_version}")
-	include("org.jetbrains.exposed:exposed-core:${project.exposed_version}")
+	modImplementation("io.github.ladysnake:PlayerAbilityLib:${project.pal_version}")
+
+	implementation(include("com.h2database:h2:${project.h2database_version}"))
+	implementation(include("org.postgresql:postgresql:${project.postgresql_version}"))
+    implementation(include("com.zaxxer:HikariCP:${project.HikariCP_version}"))
+
+    implementation("org.jetbrains.exposed:exposed-core:${project.exposed_version}")
 	implementation("org.jetbrains.exposed:exposed-jdbc:${project.exposed_version}")
-    include("org.jetbrains.exposed:exposed-jdbc:${project.exposed_version}")
-	implementation("com.zaxxer:HikariCP:${project.HikariCP_version}")
-	include("com.zaxxer:HikariCP:${project.HikariCP_version}")
-	implementation("com.h2database:h2:${project.h2database_version}")
-	include("com.h2database:h2:${project.h2database_version}")
-	implementation("org.postgresql:postgresql:${project.postgresql_version}")
-	include("org.postgresql:postgresql:${project.postgresql_version}")
+    shadow("org.jetbrains.exposed:exposed-core:${project.exposed_version}")
+    shadow("org.jetbrains.exposed:exposed-jdbc:${project.exposed_version}")
+
 	implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
 	implementation("com.typesafe:config:${project.typesafe_version}")
 	// Uncomment the following line to enable the deprecated Fabric API modules. 
 	// These are included in the Fabric API production distribution and allow you to update your mod to the latest modules at a later more convenient time.
 
 	// modImplementation "net.fabricmc.fabric-api:fabric-api-deprecated:${project.fabric_version}"
+}
+
+shadowJar {
+    configurations = [project.configurations.shadow]
+    archiveClassifier.set("shadow")
+    
+    relocate("org.jetbrains.exposed", "com.imyvm.villagerShop.relocated.exposed")
+
+    exclude("kotlin/**")
+    exclude("kotlinx/**")
+    exclude("**/*.kotlin_metadata")
+    exclude("**/*.kotlin_module")
+    exclude("**/*.kotlin_builtins")
+
+    exclude("META-INF/kotlin/**")
+    exclude("META-INF/services/kotlinx.**")
+
+    exclude("**/*.md")
+    exclude("**/*.txt")
+    exclude("**/*.html")
+    exclude("META-INF/LICENSE*")
+    exclude("META-INF/NOTICE*")
+    exclude("META-INF/DEPENDENCIES*")
+
+    mergeServiceFiles()
 }
 
 processResources {
@@ -126,11 +155,25 @@ tasks.withType(KotlinCompile).configureEach {
 	}
 }
 
+remapJar {
+    dependsOn(shadowJar)
+    inputFile.set(shadowJar.archiveFile)
+    archiveClassifier.set("")
+}
+
 java {
 	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
 	// if it is present.
 	// If you remove this line, sources will not be generated.
 	withSourcesJar()
+}
+
+build {
+    dependsOn(remapJar)
+}
+
+jar {
+    archiveClassifier.set("dev")
 }
 
 tasks.jar {

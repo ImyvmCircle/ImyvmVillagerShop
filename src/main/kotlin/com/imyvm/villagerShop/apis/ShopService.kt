@@ -167,15 +167,15 @@ class ShopService(private val database: Database, private val server: MinecraftS
             .where { DataBaseInfo.dbVersion eq version }
             .count() > 0
         if (!exists) {
-            LOGGER.info("Applying migration $migrationName ($version)")
+            LOGGER.info("[ImyvmVillagerShop] Applying migration $migrationName ($version)")
             migration()
             DataBaseInfo.insert {
                 it[dbVersion] = version
                 it[appliedAt] = Date().toString()
             }
-            LOGGER.info("Migration $migrationName ($version) applied")
+            LOGGER.info("[ImyvmVillagerShop] Migration $migrationName ($version) applied")
         } else {
-            LOGGER.info("Migration $migrationName ($version) already applied, skipping")
+            LOGGER.info("[ImyvmVillagerShop] Migration $migrationName ($version) already applied, skipping")
         }
     }
 
@@ -202,7 +202,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
                 row[Shops.id].value to row[Shops.owner]
             }
 
-            LOGGER.info("Migrating ${allShops.size} shops to add ownerUUID")
+            LOGGER.info("[ImyvmVillagerShop] Migrating ${allShops.size} shops to add ownerUUID")
 
             allShops.forEach { (id, playerName) ->
                 val playerUUID = server.userCache?.findByName(playerName)?.get()?.id ?: UUID.fromString("00000000-0000-4000-8000-000000000000")
@@ -211,7 +211,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
                 }
             }
 
-            LOGGER.info("Migration to add ownerUUID completed")
+            LOGGER.info("[ImyvmVillagerShop] Migration to add ownerUUID completed")
         }
     }
 
