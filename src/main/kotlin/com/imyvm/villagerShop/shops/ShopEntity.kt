@@ -5,9 +5,11 @@ import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.EconomyData
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.imyvm.villagerShop.apis.customScope
 import com.imyvm.villagerShop.items.ItemManager
 import com.mojang.brigadier.arguments.StringArgumentType.getString
 import com.mojang.brigadier.context.CommandContext
+import kotlinx.coroutines.launch
 import net.minecraft.command.CommandRegistryAccess
 import net.minecraft.command.argument.BlockPosArgumentType.getBlockPos
 import net.minecraft.command.argument.ItemStackArgument
@@ -90,7 +92,7 @@ class ShopEntity(
     fun addTradeOffer(tradeItem: ItemManager, player: ServerPlayerEntity) {
         this.items.add(tradeItem)
         player.sendMessage(tr("commands.shop.item.add.success"))
-        update()
+        updateAsync()
     }
 
     fun info(player: ServerPlayerEntity) {
@@ -112,9 +114,15 @@ class ShopEntity(
         shopDBService.delete(this.id)
     }
 
+    fun deleteAsync() {
+        customScope.launch {
+            shopDBService.dbQueryAsync { shopDBService.delete(this@ShopEntity.id) }
+        }
+    }
+
     fun setAdmin() {
         this.admin = 1
-        update()
+        updateAsync()
     }
 
     fun spawnOrRespawn(world: ServerWorld): VillagerEntity {
@@ -139,11 +147,17 @@ class ShopEntity(
             it.item.item.value() == itemToRemove.item &&
                     it.item.itemStack.components == itemToRemove.createStack(1, false).components
         }
-        update()
+        updateAsync()
     }
 
     fun update() {
         shopDBService.update(this)
+    }
+
+    fun updateAsync() {
+        customScope.launch {
+            shopDBService.dbQueryAsync { shopDBService.update(this@ShopEntity) }
+        }
     }
 
     companion object {

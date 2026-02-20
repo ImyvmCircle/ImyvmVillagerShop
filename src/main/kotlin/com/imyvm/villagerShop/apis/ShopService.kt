@@ -8,6 +8,8 @@ import com.imyvm.villagerShop.items.ItemManager.Companion.storeItemList
 import com.imyvm.villagerShop.shops.ShopEntity
 import com.imyvm.villagerShop.shops.ShopEntity.Companion.sendMessageByType
 import com.mojang.brigadier.context.CommandContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.minecraft.registry.RegistryWrapper
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.command.ServerCommandSource
@@ -63,6 +65,10 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
     fun <T> dbQuery(block: () -> T): T =
         transaction(database) { block() }
+
+    suspend fun <T> dbQueryAsync(block: () -> T): T = withContext(Dispatchers.IO) {
+        transaction(database) { block() }
+    }
 
     @Suppress("DuplicatedCode")
     fun create(shop: ShopEntity): Int = dbQuery {

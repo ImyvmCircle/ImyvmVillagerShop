@@ -6,15 +6,21 @@ import com.imyvm.villagerShop.commands.pendingOperations
 import com.mojang.brigadier.context.CommandContext
 import kotlinx.coroutines.*
 import net.minecraft.server.command.ServerCommandSource
+import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 val coroutineContext = SupervisorJob() + Dispatchers.Default
 val customScope = CoroutineScope(coroutineContext)
+
+// Tracks the auto-cancel timer Job for each player's pending operation
+val pendingOperationJobs = ConcurrentHashMap<UUID, Job>()
+
 fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long = 61) {
     val playerUUID = context.source.player!!.uuid
-    customScope.launch {
+    val job = customScope.launch {
         val result = withTimeoutOrNull(TimeUnit.SECONDS.toMillis(duration)) {
-            delay(TimeUnit.SECONDS.toMillis(duration-1))
+            delay(TimeUnit.SECONDS.toMillis(duration - 1))
             pendingOperations.remove(playerUUID)
             "Cancel ok"
         }
@@ -24,4 +30,11 @@ fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long 
         }
         context.source.player!!.sendMessage(tr("commands.confirm.autocancel"))
     }
+    pendingOperationJobs[playerUUID] = job
+    job.invokeOnCompletion { pendingOperationJobs.remove(playerUUID) }
+}
+
+/** Cancels only the timer job for a specific player, leaving the global scope intact. */
+fun cancelPendingOperationJob(playerUUID: UUID) {
+    pendingOperationJobs.remove(playerUUID)?.cancel()
 }

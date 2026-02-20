@@ -7,8 +7,9 @@ import com.imyvm.villagerShop.VillagerShopMain.Companion.shopEntityList
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.ShopService.Companion.rangeSearch
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.imyvm.villagerShop.apis.cancelPendingOperationJob
 import com.imyvm.villagerShop.apis.coroutineScope
-import com.imyvm.villagerShop.apis.customScope
+import com.imyvm.villagerShop.gui.ShopCreateGui
 import com.imyvm.villagerShop.items.ItemManager
 import com.imyvm.villagerShop.items.ItemManager.Companion.offerItemToPlayer
 import com.imyvm.villagerShop.items.ItemManager.Companion.removeItemFromInventory
@@ -26,7 +27,6 @@ import com.mojang.brigadier.arguments.StringArgumentType.*
 import com.mojang.brigadier.context.CommandContext
 import com.mojang.brigadier.suggestion.Suggestions
 import com.mojang.brigadier.suggestion.SuggestionsBuilder
-import kotlinx.coroutines.cancel
 import me.lucko.fabric.api.permissions.v0.Permissions
 import net.minecraft.command.CommandRegistryAccess
 import net.minecraft.command.argument.BlockPosArgumentType.blockPos
@@ -52,6 +52,17 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
              registryAccess: CommandRegistryAccess) {
         val builder = literal("villagerShop")
         .requires(ServerCommandSource::isExecutedByPlayer)
+            .then(
+                literal("gui")
+                .then(
+                    literal("open")
+                        .executes { context ->
+                            val player = context.source.player!!
+                            ShopCreateGui(player, registryAccess).open()
+                            1
+                        }
+                )
+            )
             .then(literal("create")
                 .then(literal("adminShop")
                     .requires{ source ->
@@ -325,7 +336,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                     ).singleOrNull()
                                     shop?.let {
                                         shop.shopname = getString(context, "shopNameNew")
-                                        shop.update()
+                                        shop.updateAsync()
                                         val shopEntity = shopEntityList.getOrDefault(it.id, null)
                                         shopEntity?.customName = Text.of(shop.shopname)
                                         context.source.player?.sendMessage(tr("commands.execute.success"))
@@ -344,7 +355,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                     )
                                     shop?.let {
                                         shop.shopname = getString(context, "shopNameNew")
-                                        shop.update()
+                                        shop.updateAsync()
                                         val shopEntity = shopEntityList.getOrDefault(it.id, null)
                                         shopEntity?.customName = Text.of(shop.shopname)
                                         player.sendMessage(tr("commands.execute.success"))
@@ -399,7 +410,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                     synchronized(shopEntityList) {
                                         shopEntityList.remove(getInteger(context, "id"))
                                     }
-                                    shop.delete()
+                                    shop.deleteAsync()
                                     player.sendMessage(tr("commands.deleteshop.ok"))
                                 }
                                 addPendingOperation(context, action)
@@ -422,7 +433,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                     synchronized(shopEntityList) {
                                         shopEntityList.remove(it.id)
                                     }
-                                    shop.delete()
+                                    shop.deleteAsync()
                                     offerItemToPlayer(player, it.items)
                                     player.sendMessage(tr("commands.deleteshop.ok"))
                                 }
@@ -534,7 +545,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                             if (stock == -1) stockToAdd + 1
                                             tradeNeedChange.stock["default"] = stock + stockToAdd
                                         }
-                                        shop.update()
+                                        shop.updateAsync()
                                     } ?: player.sendMessage(tr("commands.shop.create.no_item"))
                                 } ?: player.sendMessage(tr("commands.shops.none"))
                                 1
@@ -556,7 +567,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                 getInteger(context, "addedStock")
                                             )
                                             tradeNeedChange.stock["default"]?.let { stock -> tradeNeedChange.stock["default"] = stock + stockToAdd }
-                                            shop.update()
+                                            shop.updateAsync()
                                         } ?: player.sendMessage(tr("commands.shop.create.no_item"))
                                     } ?: player.sendMessage(tr("commands.shops.none"))
                                     1
@@ -625,7 +636,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                 )
                                             )
                                         }
-                                        it.update()
+                                        it.updateAsync()
                                     }
                                     addPendingOperation(context, action)
                                 } ?: player.sendMessage(tr("commands.shops.none"))
@@ -655,7 +666,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                                                 item.price = getDouble(context, "price")
                                                 player.sendMessage(tr("commands.shop.item.change.success"))
                                             } ?: player.sendMessage(tr("commands.shop.item.none"))
-                                            it.update()
+                                            it.updateAsync()
                                         }
                                         1
                                     }
@@ -677,7 +688,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                         val textSupplier = Supplier<Text> { tr("commands.confirm.none") }
                         context.source.sendFeedback(textSupplier, false)
                     }
-                    customScope.cancel()
+                    playerUUID?.let { cancelPendingOperationJob(it) }
                     1
                 }
             )
@@ -691,7 +702,7 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                         Supplier<Text> { tr("commands.cancel.none") }
                     }
                     context.source.sendFeedback(textSupplier, false)
-                    customScope.cancel()
+                    playerUUID?.let { cancelPendingOperationJob(it) }
                     1
                 }
             )
@@ -706,7 +717,7 @@ private fun shopPosChange(context: CommandContext<ServerCommandSource>, player: 
         shop.posX = newPos.x
         shop.posY = newPos.y
         shop.posZ = newPos.z
-        shop.update()
+        shop.updateAsync()
 
         val shopEntity = shopEntityList.getOrDefault(it.id, null)
         shopEntity?.setPos(

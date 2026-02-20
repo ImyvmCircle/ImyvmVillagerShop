@@ -5,9 +5,11 @@ import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.EconomyData
 import com.imyvm.villagerShop.apis.ShopService.Companion.ShopType
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.imyvm.villagerShop.apis.customScope
 import com.imyvm.villagerShop.shops.ShopEntity
 import eu.pb4.sgui.api.ClickType
 import eu.pb4.sgui.api.gui.MerchantGui
+import kotlinx.coroutines.launch
 import net.minecraft.component.DataComponentTypes
 import net.minecraft.component.type.LoreComponent
 import net.minecraft.component.type.NbtComponent
@@ -28,7 +30,11 @@ import java.util.regex.Matcher
 import java.util.regex.Pattern
 import kotlin.random.Random
 
-class ShopGui(private val playerEntity: ServerPlayerEntity, private val registries: RegistryWrapper.WrapperLookup) {
+
+class ShopTradeGui(
+    private val playerEntity: ServerPlayerEntity,
+    private val registries: RegistryWrapper.WrapperLookup
+) {
     private val gui = object : MerchantGui(playerEntity, false) {
         override fun onAnyClick(index: Int, type: ClickType?, action: SlotActionType?): Boolean {
             if (index == 0 || index == 1) {
@@ -146,7 +152,7 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
                     player.sendMessage(tr("shop.purchase.success", moneyShouldGetOnce * sellTimes))
                     this.sendUpdate()
                 }
-                shopEntity?.update()
+                shopEntity?.updateAsync()
             }
             return super.onAnyClick(index, type, action)
         }
@@ -157,7 +163,7 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
 
         override fun onClose() {
             villagerEntity?.let { removeGui(it) }
-            shopEntity?.update()
+            shopEntity?.updateAsync()
             super.onClose()
         }
     }
@@ -183,8 +189,21 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
             return
         }
 
-        shopEntity = shopDBService.readById(id, this.registries)
+        customScope.launch {
+            val loadedShop = shopDBService.dbQueryAsync {
+                shopDBService.readById(id, registries)
+            }
+            playerEntity.server.execute {
+                shopEntity = loadedShop
+                if (shopEntity != null) {
+                    addGui(villager)
+                    buildAndOpenGui()
+                }
+            }
+        }
+    }
 
+    private fun buildAndOpenGui() {
         shopEntity?.items?.forEach { items ->
             // Get stock
 
@@ -243,8 +262,6 @@ class ShopGui(private val playerEntity: ServerPlayerEntity, private val registri
 
         gui.title = Text.of(shopEntity?.shopname)
         gui.open()
-
-        addGui(villager)
     }
 
     private fun addGui(villager: VillagerEntity) {

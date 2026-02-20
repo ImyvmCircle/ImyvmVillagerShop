@@ -13,7 +13,6 @@ fun spawnInvulnerableVillager(
     id: Int
 ): VillagerEntity {
     val villager = VillagerEntity(EntityType.VILLAGER, world)
-    villager.id = id
     villager.setPos(
         pos.x.toDouble() + if (pos.x >= 0) 0.5 else -0.5,
         pos.y.toDouble() + 1,

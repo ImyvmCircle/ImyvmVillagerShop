@@ -47,6 +47,7 @@
   "commands.shops.none": "The shop does not exist",
   "commands.stock.add.ok": "Successfully consumed {0} item(s) to restock",
   "commands.failed": "An unexpected error occurred",
+  "gui.shop_create.title": "Shop Creation Menu",
   "shop.buy.money.lack": "§4§lLack of funds, you need $ {0} to purchase this item",
   "shop.buy.stock.lack": "§4§lNot enough stock",
   "shop.buy.success": "You spent $ {0} to purchase {1} {2}(s)",

@@ -1,15 +1,13 @@
 package com.imyvm.villagerShop
 
-import com.imyvm.villagerShop.apis.DbSettings
-import com.imyvm.villagerShop.apis.EconomyData
-import com.imyvm.villagerShop.apis.ModConfig
-import com.imyvm.villagerShop.apis.ShopService
+import com.imyvm.villagerShop.apis.*
 import com.imyvm.villagerShop.apis.ShopService.Companion.resetRefreshableSellAndBuy
 import com.imyvm.villagerShop.apis.Translator.tr
 import com.imyvm.villagerShop.commands.register
 import com.imyvm.villagerShop.events.PlayerConnectCallback
-import com.imyvm.villagerShop.gui.ShopGui
+import com.imyvm.villagerShop.gui.ShopTradeGui
 import com.imyvm.villagerShop.items.ItemManager
+import kotlinx.coroutines.launch
 import net.fabricmc.api.ModInitializer
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents
@@ -47,21 +45,25 @@ class VillagerShopMain : ModInitializer {
 		}
 		ServerEntityEvents.ENTITY_LOAD.register { entity, serverWorld ->
 			if (entity is VillagerEntity && entity.commandTags.contains("VillagerShop")) {
-				serverWorld.server.execute {
-					val id =
-						entity.commandTags.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull()
-							?: -1
-					if (id != -1) {
-						val shopEntity = shopDBService.readById(id, serverWorld.registryManager)
-						shopEntity?.let { shopEntity ->
-							entity.setPos(
-								shopEntity.posX.toDouble() + 0.5,
-								shopEntity.posY.toDouble() + 1,
-								shopEntity.posZ.toDouble() + 0.5
-							)
-							entity.customName = Text.of(shopEntity.shopname)
-							synchronized(shopEntityList) {
-								shopEntityList[shopEntity.id] = entity
+                val id =
+                    entity.commandTags.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull()
+                        ?: -1
+                if (id != -1) {
+                    customScope.launch {
+                        val shop = shopDBService.dbQueryAsync {
+                            shopDBService.readById(id, serverWorld.registryManager)
+                        }
+                        shop?.let { s ->
+                            serverWorld.server.execute {
+                                entity.setPos(
+                                    s.posX.toDouble() + 0.5,
+                                    s.posY.toDouble() + 1,
+                                    s.posZ.toDouble() + 0.5
+                                )
+                                entity.customName = Text.of(s.shopname)
+                                synchronized(shopEntityList) {
+                                    shopEntityList[s.id] = entity
+                                }
 							}
 						}
 					}
@@ -73,23 +75,30 @@ class VillagerShopMain : ModInitializer {
 		}
 		UseEntityCallback.EVENT.register { player, world, _, entity, _ ->
 			if (entity.commandTags.contains("VillagerShop") && player is ServerPlayerEntity && entity is VillagerEntity && !containGui(entity)) {
-				ShopGui(player, world.registryManager).open(entity)
+                ShopTradeGui(player, world.registryManager).open(entity)
 				ActionResult.SUCCESS
 			} else {
 				ActionResult.PASS
 			}
 		}
 		PlayerConnectCallback.EVENT.register { _, player ->
-			var incomeTotal = 0.0
-			shopDBService.readByOwner(player.nameForScoreboard, player.registryManager).forEach {
-				incomeTotal += it.income
-				it.income = 0.0
-				shopDBService.update(it)
-			}
+            customScope.launch {
+                val incomeTotal = shopDBService.dbQueryAsync {
+                    var total = 0.0
+                    shopDBService.readByOwner(player.nameForScoreboard, player.registryManager).forEach {
+                        total += it.income
+                        it.income = 0.0
+                        shopDBService.update(it)
+                    }
+                    total
+                }
 
-			if (incomeTotal != 0.0) {
-				EconomyData(player).addMoney((incomeTotal * 100).toLong())
-				player.sendMessage(tr("commands.balance.add", incomeTotal.toLong()))
+                if (incomeTotal != 0.0) {
+                    player.server.execute {
+                        EconomyData(player).addMoney((incomeTotal * 100).toLong())
+                        player.sendMessage(tr("commands.balance.add", incomeTotal.toLong()))
+                    }
+                }
 			}
 		}
 		LOGGER.info("Imyvm Villager Shop initialized")
@@ -101,7 +110,7 @@ class VillagerShopMain : ModInitializer {
 		const val MOD_ID = "imyvm_villagershop"
 		val CONFIG: ModConfig = ModConfig()
 		val itemList: MutableList<ItemManager> = mutableListOf()
-		val guiSet: ConcurrentHashMap.KeySetView<VillagerEntity, Boolean> = ConcurrentHashMap.newKeySet()
+        val guiSet: ConcurrentHashMap.KeySetView<Any, Boolean> = ConcurrentHashMap.newKeySet()
 		val shopEntityList: MutableMap<Int, VillagerEntity> = mutableMapOf()
         lateinit var shopDBService: ShopService
             private set
@@ -124,8 +133,11 @@ class VillagerShopMain : ModInitializer {
 	private fun scheduleDailyTask(registries: RegistryWrapper.WrapperLookup) {
 
 		val midnightTask = Runnable {
-			// Reset daily limit
-			resetRefreshableSellAndBuy(registries)
+            customScope.launch {
+                shopDBService.dbQueryAsync {
+                    resetRefreshableSellAndBuy(registries)
+                }
+            }
 		}
 
 		val now = LocalDateTime.now()
