@@ -14,6 +14,7 @@ import net.minecraft.command.CommandRegistryAccess
 import net.minecraft.command.argument.BlockPosArgumentType.getBlockPos
 import net.minecraft.command.argument.ItemStackArgument
 import net.minecraft.entity.passive.VillagerEntity
+import net.minecraft.item.ItemStack
 import net.minecraft.server.command.ServerCommandSource
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
@@ -142,10 +143,25 @@ class ShopEntity(
         }
     }
 
+    fun getTradedItem(tradeItem: ItemStack): ItemManager? {
+        return this.items.find {
+            it.item.item.value() == tradeItem.item &&
+                    it.item.itemStack.components == tradeItem.components
+        }
+    }
+
     fun deleteTradedItem(itemToRemove: ItemStackArgument) {
         this.items.removeIf {
             it.item.item.value() == itemToRemove.item &&
                     it.item.itemStack.components == itemToRemove.createStack(1, false).components
+        }
+        updateAsync()
+    }
+
+    fun deleteTradedItem(itemToRemove: ItemStack) {
+        this.items.removeIf {
+            it.item.item.value() == itemToRemove.item &&
+                    it.item.itemStack.components == itemToRemove.components
         }
         updateAsync()
     }

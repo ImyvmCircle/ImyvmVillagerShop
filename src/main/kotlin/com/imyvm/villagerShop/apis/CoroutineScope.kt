@@ -28,7 +28,10 @@ fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long 
             pendingOperations.remove(playerUUID)
             VillagerShopMain.LOGGER.warn("Operation auto cancel failed！")
         }
-        context.source.player!!.sendMessage(tr("commands.confirm.autocancel"))
+        context.source.player?.let { player ->
+            player.sendMessage(tr("commands.confirm.autocancel"))
+            player.server.execute { player.server.playerManager.sendCommandTree(player) }
+        }
     }
     pendingOperationJobs[playerUUID] = job
     job.invokeOnCompletion { pendingOperationJobs.remove(playerUUID) }

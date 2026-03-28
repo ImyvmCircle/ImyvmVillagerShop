@@ -9,7 +9,9 @@ import com.imyvm.villagerShop.apis.ShopService.Companion.rangeSearch
 import com.imyvm.villagerShop.apis.Translator.tr
 import com.imyvm.villagerShop.apis.cancelPendingOperationJob
 import com.imyvm.villagerShop.apis.coroutineScope
+import com.imyvm.villagerShop.gui.PendingConfirmGui
 import com.imyvm.villagerShop.gui.ShopCreateGui
+import com.imyvm.villagerShop.gui.ShopManageGui
 import com.imyvm.villagerShop.items.ItemManager
 import com.imyvm.villagerShop.items.ItemManager.Companion.offerItemToPlayer
 import com.imyvm.villagerShop.items.ItemManager.Companion.removeItemFromInventory
@@ -46,628 +48,590 @@ import java.util.function.Supplier
 
 data class PendingOperation(val playerUuid: UUID, val operation: () -> Unit)
 data class TempShop(val shopEntity: ShopEntity, val takeMoney: Long, val shopType: Int)
+
 val pendingOperations = ConcurrentHashMap<UUID, PendingOperation>()
 val tempShops = ConcurrentHashMap<UUID, TempShop>()
-fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
-             registryAccess: CommandRegistryAccess) {
-        val builder = literal("villagerShop")
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+/** Looks up a player's shop by name (owner-scoped). */
+private fun normalizeShopLookupName(raw: String): String = raw.trim()
+    .removeSurrounding("\"")
+    .removeSurrounding("“", "”")
+    .replace('\u3000', ' ')
+    .replace(Regex("\\s+"), " ")
+
+private fun maybeSendQuotedNameHint(player: ServerPlayerEntity, rawName: String) {
+    if (rawName.contains(' ') || rawName.any { it.code > 127 }) {
+        player.sendMessage(tr("commands.shop.name.quote_hint"))
+    }
+}
+
+private fun findShopByName(
+    name: String,
+    player: ServerPlayerEntity,
+    context: CommandContext<ServerCommandSource>
+): ShopEntity? {
+    val normalized = normalizeShopLookupName(name)
+    return shopDBService.readByShopName(normalized, player.nameForScoreboard, context.source.registryManager).firstOrNull()
+        ?: if (normalized != name) {
+            shopDBService.readByShopName(name, player.nameForScoreboard, context.source.registryManager).firstOrNull()
+        } else null
+        ?: shopDBService.readByOwner(player.nameForScoreboard, context.source.registryManager)
+            .firstOrNull { normalizeShopLookupName(it.shopname) == normalized }
+}
+
+private fun findShopByNameOrNotify(
+    name: String,
+    player: ServerPlayerEntity,
+    context: CommandContext<ServerCommandSource>
+): ShopEntity? {
+    val shop = findShopByName(name, player, context)
+    if (shop == null) {
+        player.sendMessage(tr("commands.shops.none"))
+        maybeSendQuotedNameHint(player, name)
+    }
+    return shop
+}
+
+/** Looks up any shop by numeric ID (admin use). */
+private fun findShopById(
+    id: Int,
+    context: CommandContext<ServerCommandSource>
+): ShopEntity? = shopDBService.readById(id, context.source.registryManager)
+
+/**
+ * Returns the ItemStack to operate on: the explicit [itemArg] if provided,
+ * otherwise the player's main-hand item. Sends an error and returns null if
+ * the main hand is empty.
+ */
+private fun resolveItem(
+    context: CommandContext<ServerCommandSource>,
+    player: ServerPlayerEntity,
+    itemArg: String? = null
+): ItemStack? {
+    if (itemArg != null) return getItemStackArgument(context, itemArg).createStack(1, false)
+    val held = player.mainHandStack
+    if (held.isEmpty) { player.sendMessage(tr("commands.shop.create.no_item")); return null }
+    return held.copyWithCount(1)
+}
+
+// ─── Command registration ────────────────────────────────────────────────────
+
+fun register(
+    dispatcher: CommandDispatcher<ServerCommandSource>,
+    registryAccess: CommandRegistryAccess
+) {
+    val builder = literal("villagerShop")
         .requires(ServerCommandSource::isExecutedByPlayer)
-            .then(
-                literal("gui")
-                .then(
-                    literal("open")
-                        .executes { context ->
-                            val player = context.source.player!!
-                            ShopCreateGui(player, registryAccess).open()
-                            1
-                        }
-                )
-            )
-            .then(literal("create")
-                .then(literal("adminShop")
-                    .requires{ source ->
-                        Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
-                                tempShops.containsKey(source.player!!.uuid).not()
-                    }
-                    .then(argument("shopName", string())
-                        .then(argument("pos", blockPos())
-                            .then(argument("type", string())
-                                .suggests { _, builder ->
-                                    suggestOptions(builder, ShopType.entries.map { it.name })
-                                }
-                                .executes { context ->
-                                    val newShop = ShopEntity(context, ShopType.valueOf(getString(context, "type")))
-                                    val player = context.source.player!!
-                                    tempShops[player.uuid] = TempShop(newShop, 0L, 1)
-                                    newShop.info(player)
-                                    val command = CommandUtil.getSuggestCommandText("/villagerShop create addItem")
-                                    player.sendMessage(tr("commands.shop.create.define.success", command))
-                                    refreshCommandTree(player)
-                                    1
-                                }
-                            )
-                        )
-                    )
-                )
-                .then(literal("shop")
-                    .requires { source ->
-                        tempShops.containsKey(source.player!!.uuid).not()
-                    }
-                    .then(argument("shopName", string())
-                        .then(argument("pos", blockPos())
+        .executes { context -> openCreateGui(context, registryAccess) }
+
+        // ── /vs create  →  open GUI directly ──────────────────────────────
+        // (no args: GUI; with args: legacy command-line flow preserved)
+        .then(literal("create")
+            .executes { context ->
+                openCreateGui(context, registryAccess)
+            }
+            .then(literal("adminShop")
+                .requires { source ->
+                    Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
+                        !tempShops.containsKey(source.player!!.uuid)
+                }
+                .executes { context -> openCreateGui(context, registryAccess) }
+                .then(argument("shopName", string())
+                    .then(argument("pos", blockPos())
+                        .then(argument("type", string())
+                            .suggests { _, b -> suggestOptions(b, ShopType.entries.map { it.name }) }
                             .executes { context ->
                                 val player = context.source.player!!
-                                val amount = if (checkCanCreateShop(
-                                    getString(context, "shopName"),
-                                    player.nameForScoreboard,
-                                    registryAccess
-                                )) {
-                                    checkPlayerMoney(player, registryAccess)
-                                } else {
-                                    player.sendMessage(tr("commands.shop.create.name_used"))
-                                    return@executes 1
-                                }
-                                if (amount <= 0) {
-                                    player.sendMessage(tr("commands.shop.create.failed.lack"))
-                                    return@executes 1
-                                }
-                                val newShop = ShopEntity(context)
-                                tempShops[player.uuid] = TempShop(newShop, amount, 0)
+                                val newShop = ShopEntity(context, ShopType.valueOf(getString(context, "type")))
+                                tempShops[player.uuid] = TempShop(newShop, 0L, 1)
                                 newShop.info(player)
-                                val command = CommandUtil.getSuggestCommandText("/villagerShop create addItem")
-                                player.sendMessage(tr("commands.shop.create.define.success", command))
+                                player.sendMessage(tr("commands.shop.create.define.success",
+                                    CommandUtil.getSuggestCommandText("/villagerShop create addItem")))
                                 refreshCommandTree(player)
                                 1
                             }
                         )
                     )
                 )
-                .then(literal("addItem")
-                    .requires { source ->
-                        source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid)
-                    }
-                    .then(argument("item", itemStack(registryAccess))
-                        .then(argument("quantitySoldEachTime", integer(1, 99))
-                            .then(argument("price", doubleArg(0.1))
-                                .then(argument("stock", integer(0))
-                                    .requires{ source ->
-                                        Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
-                                                tempShops[source.player!!.uuid]!!.shopType == 1
-                                    }
-                                    .executes { context ->
-                                        val player = context.source.player!!
-                                        val tempShop = tempShops[player.uuid]!!
-                                        val shopEntity = tempShop.shopEntity
-                                        shopEntity.addTradeOffer(
-                                            ItemManager(
-                                                getItemStackArgument(context, "item"),
-                                                getInteger(context, "quantitySoldEachTime"),
-                                                getDouble(context, "price"),
-                                                mutableMapOf(Pair("default", getInteger(context, "stock"))),
-                                                context.source.registryManager
-                                            ),
-                                            player
-                                        )
-                                        player.sendMessage(tr("commands.shop.item.add.success"))
-                                        val continueCommand = CommandUtil.getSuggestCommandText("/villagerShop create addItem")
-                                        val submitCommand = CommandUtil.getSuggestCommandText("/villagerShop create submit")
-                                        player.sendMessage(tr("commands.shop.item.continue.or.submit", continueCommand, submitCommand))
-                                        val deleteCommand = CommandUtil.getSuggestCommandText("/villagerShop create removeItem")
-                                        player.sendMessage(tr("commands.shop.item.remove", deleteCommand))
-                                        1
-                                    }
-                                )
+            )
+            .then(literal("shop")
+                .requires { source -> !tempShops.containsKey(source.player!!.uuid) }
+                .executes { context -> openCreateGui(context, registryAccess) }
+                .then(argument("shopName", string())
+                    .then(argument("pos", blockPos())
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val shopName = getString(context, "shopName")
+                            if (!checkCanCreateShop(shopName, player.nameForScoreboard, registryAccess)) {
+                                player.sendMessage(tr("commands.shop.create.name_used")); return@executes 1
+                            }
+                            val amount = checkPlayerMoney(player, registryAccess)
+                            if (amount <= 0) {
+                                player.sendMessage(tr("commands.shop.create.failed.lack")); return@executes 1
+                            }
+                            val newShop = ShopEntity(context)
+                            tempShops[player.uuid] = TempShop(newShop, amount, 0)
+                            newShop.info(player)
+                            player.sendMessage(tr("commands.shop.create.define.success",
+                                CommandUtil.getSuggestCommandText("/villagerShop create addItem")))
+                            refreshCommandTree(player)
+                            1
+                        }
+                    )
+                )
+            )
+            .then(literal("addItem")
+                .requires { source -> source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid) }
+                .executes { context -> openCreateGui(context, registryAccess) }
+                .then(argument("item", itemStack(registryAccess))
+                    .then(argument("quantitySoldEachTime", integer(1, 99))
+                        .then(argument("price", doubleArg(0.1))
+                            // Admin branch: explicit stock
+                            .then(argument("stock", integer(0))
+                                .requires { source ->
+                                    Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
+                                        tempShops[source.player!!.uuid]?.shopType == 1
+                                }
+                                .executes { context ->
+                                    addItemToTempShop(context, getInteger(context, "stock"))
+                                }
+                            )
+                            // Player branch: take from inventory
                             .executes { context ->
                                 val player = context.source.player!!
                                 val tempShop = tempShops[player.uuid]!!
-                                val shopEntity = tempShop.shopEntity
-                                if (checkCanAddTradeOffer(
-                                    shopEntity,
-                                    ItemManager(
-                                        getItemStackArgument(context, "item"),
-                                        getInteger(context, "quantitySoldEachTime"),
-                                        getDouble(context, "price"),
-                                        mutableMapOf(Pair("default", 0)),
-                                        context.source.registryManager
-                                    ),
-                                    player
-                                )) {
-                                    val stock = removeItemFromInventory(
-                                        player,
-                                        getItemStackArgument(context, "item").createStack(1, false),
-                                        getInteger(context, "quantitySoldEachTime")
-                                    )
-                                    shopEntity.addTradeOffer(
-                                        ItemManager(
-                                            getItemStackArgument(context, "item"),
-                                            getInteger(context, "quantitySoldEachTime"),
-                                            getDouble(context, "price"),
-                                            mutableMapOf(Pair("default", stock)),
-                                            context.source.registryManager
-                                        ),
-                                        player
-                                    )
-                                    tempShops[player.uuid] = TempShop(
-                                        shopEntity,
-                                        tempShop.takeMoney,
-                                        tempShop.shopType
-                                    )
-                                    player.sendMessage(tr("commands.shop.item.add.success"))
-                                    val continueCommand = CommandUtil.getSuggestCommandText("/villagerShop create addItem")
-                                    val submitCommand = CommandUtil.getSuggestCommandText("/villagerShop create submit")
-                                    player.sendMessage(tr("commands.shop.item.continue.or.submit", continueCommand, submitCommand))
-                                    val deleteCommand = CommandUtil.getSuggestCommandText("/villagerShop create removeItem")
-                                    player.sendMessage(tr("commands.shop.item.remove", deleteCommand))
-                                }
-                                1
-                            })
-                        )
-                    )
-                )
-                .then(literal("removeItem")
-                .requires { source ->
-                        source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid)
-                    }
-                    .then(argument("item", itemStack(registryAccess))
-                        .executes { context ->
-                            val player = context.source.player!!
-                            val shopEntity = tempShops[player.uuid]!!.shopEntity
-                            val tradedItemNeedDelete = getItemStackArgument(context, "item")
-                            val itemInShop = shopEntity.getTradedItem(tradedItemNeedDelete)
-                            val stockInShop = itemInShop?.stock?.get("default") ?: 0
-                            shopEntity.deleteTradedItem(tradedItemNeedDelete)
-                            player.sendMessage(tr("commands.shop.item.delete.success",
-                                tradedItemNeedDelete.createStack(1, false).toHoverableText())
-                            )
-                            if (stockInShop > 0) {
-                                player.inventory.offerOrDrop(
-                                    ItemStack(
-                                        itemInShop?.item?.item,
-                                        itemInShop?.stock?.get("default") ?: 0
-                                    )
+                                val candidate = ItemManager(
+                                    getItemStackArgument(context, "item"),
+                                    getInteger(context, "quantitySoldEachTime"),
+                                    getDouble(context, "price"),
+                                    mutableMapOf("default" to 0),
+                                    context.source.registryManager
                                 )
-                            }
-                            1
-                        }
-                    )
-                )
-                .then(literal("preview")
-                    .requires { source ->
-                        source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid)
-                    }
-                    .executes { context ->
-                        val player = context.source.player!!
-                        val tempShop = tempShops[player.uuid]!!
-                        val shopEntity = tempShop.shopEntity
-                        shopEntity.info(player)
-                        1
-                    }
-                )
-                .then(literal("cancel")
-                    .requires { source ->
-                        source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid)
-                    }
-                    .executes { context ->
-                        val player = context.source.player!!
-                        val tempShop = tempShops[player.uuid]!!
-                        val shopEntity = tempShop.shopEntity
-                        val itemList = shopEntity.items
-                        tempShops.remove(player.uuid)
-                        player.sendMessage(tr("commands.shop.create.cancelled"))
-                        offerItemToPlayer(player, itemList)
-                        refreshCommandTree(player)
-                        1
-                    }
-                )
-                .then(literal("submit")
-                    .requires { source ->
-                        source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid)
-                    }
-                    .executes { context ->
-                        val player = context.source.player!!
-                        val tempShop = tempShops[player.uuid]!!
-                        val shopEntity = tempShop.shopEntity
-                        val takeMoney = tempShop.takeMoney
-                        val action = action@{
-                            if (tempShop.shopType == 0) {
-                                calculateAndTakeMoney(
+                                if (!checkCanAddTradeOffer(tempShop.shopEntity, candidate, player)) return@executes 1
+                                val stock = removeItemFromInventory(
                                     player,
-                                    takeMoney
+                                    getItemStackArgument(context, "item").createStack(1, false),
+                                    getInteger(context, "quantitySoldEachTime")
                                 )
-                                shopEntity.playerShopCreate()
-                            } else if (Permissions.check(context.source, VillagerShopMain.MOD_ID + ".admin", 3)) {
-                                shopEntity.adminShopCreate()
-                            } else {
-                                player.sendMessage(tr("commands.shop.create.premission"))
-                                return@action
-                            }
-                            player.sendMessage(tr("commands.shop.create.success"))
-                            val newShopEntity = shopEntity.spawnOrRespawn(context.source.world)
-                            synchronized(shopEntityList) {
-                                shopEntityList[shopEntity.id] = newShopEntity
-                            }
-                            tempShops.remove(player.uuid)
-                            refreshCommandTree(player)
-                        }
-                        addPendingOperation(context, action)
-                        1
-                    }
-                )
-            )
-            .then(literal("config")
-                .requires { source ->
-                    Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
-                        tempShops.containsKey(source.player!!.uuid).not()
-                    }
-                .then(literal("taxRate")
-                    .then(literal("set")
-                        .then(argument("taxRate", doubleArg())
-                            .executes { context ->
-                                taxRateChange(
-                                    context,
-                                    getDouble(context, "taxRate")
-                                )
+                                addItemToTempShop(context, stock)
                             }
                         )
-                    )
-                )
-                .then(literal("reload")
-                    .executes{ context ->
-                        reload(
-                            context
-                        )
-                    }
-                )
-            )
-            .then(literal("manager")
-                .requires { source ->
-                        tempShops.containsKey(source.player!!.uuid).not()
-                    }
-                .then(literal("changeInfo")
-                    .then(literal("setShopName")
-                        .then(argument("shopNameOld", string())
-                            .then(argument("shopNameNew", string())
-                                .executes { context ->
-                                    val player = context.source.player!!
-                                    val shop = shopDBService.readByShopName(
-                                        getString(context, "shopNameOld"),
-                                        player.nameForScoreboard,
-                                        context.source.registryManager
-                                    ).singleOrNull()
-                                    shop?.let {
-                                        shop.shopname = getString(context, "shopNameNew")
-                                        shop.updateAsync()
-                                        val shopEntity = shopEntityList.getOrDefault(it.id, null)
-                                        shopEntity?.customName = Text.of(shop.shopname)
-                                        context.source.player?.sendMessage(tr("commands.execute.success"))
-                                    } ?: context.source.player?.sendMessage(tr("commands.shops.none"))
-                                    1
-                                }
-                            )
-                        )
-                        .then(argument("id", integer())
-                            .then(argument("shopNameNew", string())
-                                .executes { context ->
-                                    val player = context.source.player!!
-                                    val shop = shopDBService.readById(
-                                        getInteger(context, "id"),
-                                        context.source.registryManager
-                                    )
-                                    shop?.let {
-                                        shop.shopname = getString(context, "shopNameNew")
-                                        shop.updateAsync()
-                                        val shopEntity = shopEntityList.getOrDefault(it.id, null)
-                                        shopEntity?.customName = Text.of(shop.shopname)
-                                        player.sendMessage(tr("commands.execute.success"))
-                                    } ?: player.sendMessage(tr("commands.shops.none"))
-                                    1
-                                }
-                            )
-                        )
-                    )
-                    .then(literal("setShopPos")
-                        .then(argument("id", integer())
-                            .then(argument("newShopPos", blockPos())
-                                .executes { context ->
-                                    val player = context.source.player!!
-                                    val shop = shopDBService.readById(
-                                        getInteger(context, "id"),
-                                        context.source.registryManager
-                                    )
-                                    shopPosChange(context, player, shop)
-                                }
-                            )
-                        )
-                        .then(argument("shopName", string())
-                            .then(argument("newShopPos", blockPos())
-                                .executes { context ->
-                                    val player = context.source.player!!
-                                    val shop = shopDBService.readByShopName(
-                                        getString(context, "shopName"),
-                                        player.nameForScoreboard,
-                                        context.source.registryManager
-                                    ).singleOrNull()
-                                    shopPosChange(context, player, shop)
-                                }
-                            )
-                        )
-                    )
-                )
-                .then(literal("delete")
-                    .then(argument("id", integer(1))
-                        .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manager",2))
-                        .executes { context ->
-                            val shopId = getInteger(context, "id")
-                            val shop = shopDBService.readById(
-                                shopId,
-                                context.source.registryManager
-                            )
-                            val player = context.source.player!!
-                            shop?.let {
-                                val action = {
-                                    val shopEntity = shopEntityList.getOrDefault(shopId, null)
-                                    shopEntity?.kill()
-                                    synchronized(shopEntityList) {
-                                        shopEntityList.remove(getInteger(context, "id"))
-                                    }
-                                    shop.deleteAsync()
-                                    player.sendMessage(tr("commands.deleteshop.ok"))
-                                }
-                                addPendingOperation(context, action)
-                            } ?: player.sendMessage(tr("commands.shops.none"))
-                            1
-                        }
-                    )
-                    .then(argument("shopName",string())
-                        .executes { context ->
-                            val player = context.source.player!!
-                            val shop = shopDBService.readByShopName(
-                                getString(context,"shopName"),
-                                player.nameForScoreboard,
-                                context.source.registryManager
-                            ).singleOrNull()
-                            shop?.let {
-                                val action = {
-                                    val shopEntity = shopEntityList.getOrDefault(it.id, null)
-                                    shopEntity?.kill()
-                                    synchronized(shopEntityList) {
-                                        shopEntityList.remove(it.id)
-                                    }
-                                    shop.deleteAsync()
-                                    offerItemToPlayer(player, it.items)
-                                    player.sendMessage(tr("commands.deleteshop.ok"))
-                                }
-                                addPendingOperation(context, action)
-                            } ?: player.sendMessage(tr("commands.shops.none"))
-                            1
-                        }
-                    )
-                )
-                .then(literal("search")
-                    .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manage",2))
-                    .then(argument("searchCondition", greedyString())
-                        .executes { context ->
-                            rangeSearch(
-                                context,
-                                getString(context, "searchCondition")
-                            )
-                        }
-                    )
-                )
-                .then(literal("inquire")
-                    .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manage",2))
-                    .then(argument("id", integer(1))
-                        .executes { context ->
-                            val player = context.source.player!!
-                            val shop = shopDBService.readById(
-                                getInteger(context, "id"),
-                                context.source.registryManager
-                            )
-                            shop?.let {
-                                shop.info(player)
-                            } ?: player.sendMessage(tr("commands.search.none"))
-                            1
-                        }
-                    )
-                )
-                .then(literal("setAdmin")
-                    .requires(Permissions.require(VillagerShopMain.MOD_ID + ".admin",3))
-                    .then(argument("id", integer(1))
-                        .executes { context ->
-                            val shop = shopDBService.readById(
-                                getInteger(context, "id"),
-                                context.source.registryManager
-                            )
-                            shop?.let {
-                                val action = {
-                                    shop.setAdmin()
-                                    val textSupplier = Supplier<Text> { tr("commands.setadmin.ok") }
-                                    context.source.sendFeedback(textSupplier,true)
-                                }
-                                addPendingOperation(context, action)
-                            } ?: run {
-                                val textSupplier = Supplier<Text> { tr("commands.shops.none") }
-                                context.source.sendFeedback(textSupplier,true)
-                            }
-                            1
-                        }
                     )
                 )
             )
-            .then(literal("respawn")
-                .requires { source ->
-                    Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
-                        tempShops.containsKey(source.player!!.uuid).not()
-                    }
-                .then(argument("id", integer(1))
+            .then(literal("removeItem")
+                .requires { source -> source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid) }
+                .executes { context -> openCreateGui(context, registryAccess) }
+                .then(argument("item", itemStack(registryAccess))
                     .executes { context ->
-                        val shop = shopDBService.readById(
-                            getInteger(context, "id"),
-                            context.source.registryManager
-                        )
-                        val world = context.source.world
                         val player = context.source.player!!
-                        shop?.let {
-                            if (world.registryKey.value.toString() == shop.world) {
-                                shop.spawnOrRespawn(world)
-                                player.sendMessage(tr("commands.execute.success"))
-                            } else {
-                                player.sendMessage(tr("commands.failed"))
-                            }
-                        } ?: player.sendMessage(tr("commands.search.none"))
+                        val shopEntity = tempShops[player.uuid]!!.shopEntity
+                        val toDelete: net.minecraft.command.argument.ItemStackArgument = getItemStackArgument(context, "item")
+                        val itemInShop = shopEntity.getTradedItem(toDelete)
+                        val stockBack = itemInShop?.stock?.get("default") ?: 0
+                        shopEntity.deleteTradedItem(toDelete)
+                        player.sendMessage(tr("commands.shop.item.delete.success",
+                            toDelete.createStack(1, false).toHoverableText()))
+                        if (stockBack > 0)
+                            player.inventory.offerOrDrop(ItemStack(itemInShop?.item?.item, stockBack))
                         1
                     }
                 )
             )
-            .then(literal("item")
-                .requires { source ->
-                        tempShops.containsKey(source.player!!.uuid).not()
+            .then(literal("preview")
+                .requires { source -> source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid) }
+                .executes { context ->
+                    tempShops[context.source.player!!.uuid]!!.shopEntity.info(context.source.player!!)
+                    1
+                }
+            )
+            .then(literal("cancel")
+                .requires { source -> source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid) }
+                .executes { context ->
+                    val player = context.source.player!!
+                    val tempShop = tempShops.remove(player.uuid)!!
+                    offerItemToPlayer(player, tempShop.shopEntity.items)
+                    player.sendMessage(tr("commands.shop.create.cancelled"))
+                    refreshCommandTree(player)
+                    1
+                }
+            )
+            .then(literal("submit")
+                .requires { source -> source.isExecutedByPlayer && tempShops.containsKey(source.player!!.uuid) }
+                .executes { context ->
+                    addPendingOperation(context) { submitTempShop(context) }
+                    1
+                }
+            )
+        )
+
+        // ── /vs manager [shopName]  + grouped shop operations ───────────────
+        .then(literal("manager")
+            .executes { context -> openManageGui(context, registryAccess) }
+            .then(argument("shopName", greedyString())
+                .executes { context ->
+                    val player = context.source.player!!
+                    val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                        ?: return@executes 1
+                    ShopManageGui(player, registryAccess).openFor(shop)
+                    1
+                }
+            )
+
+            .then(literal("delete")
+                .executes { context -> openManageGui(context, registryAccess) }
+                .then(argument("shopName", greedyString())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .executes { context ->
+                        val player = context.source.player!!
+                        val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                            ?: return@executes 1
+                        addPendingOperation(context) {
+                            shopEntityList.getOrDefault(shop.id, null)?.kill()
+                            synchronized(shopEntityList) { shopEntityList.remove(shop.id) }
+                            shop.deleteAsync()
+                            offerItemToPlayer(player, shop.items)
+                            player.sendMessage(tr("commands.deleteshop.ok"))
+                        }
+                        1
                     }
-                .then(literal("addStock")
-                    .then(argument("shopName", string())
-                        .then(argument("item", itemStack(registryAccess))
+                )
+                .then(argument("id", integer(1))
+                    .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manager", 2))
+                    .executes { context ->
+                        val player = context.source.player!!
+                        val shopId = getInteger(context, "id")
+                        val shop = findShopById(shopId, context)
+                            ?: run { player.sendMessage(tr("commands.shops.none")); return@executes 1 }
+                        addPendingOperation(context) {
+                            shopEntityList.getOrDefault(shopId, null)?.kill()
+                            synchronized(shopEntityList) { shopEntityList.remove(shopId) }
+                            shop.deleteAsync()
+                            player.sendMessage(tr("commands.deleteshop.ok"))
+                        }
+                        1
+                    }
+                )
+            )
+
+            .then(literal("info")
+                .executes { context -> openManageGui(context, registryAccess) }
+                .then(argument("shopName", greedyString())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .executes { context ->
+                        val player = context.source.player!!
+                        val shopNameArg = getString(context, "shopName")
+                        (findShopByName(shopNameArg, player, context)
+                            ?: findShopById(shopNameArg.toIntOrNull() ?: -1, context))
+                            ?.info(player)
+                            ?: run {
+                                player.sendMessage(tr("commands.shops.none"))
+                                maybeSendQuotedNameHint(player, shopNameArg)
+                            }
+                        1
+                    }
+                )
+            )
+
+            .then(literal("rename")
+                .executes { context -> openManageGui(context, registryAccess) }
+                .then(argument("shopName", string())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .then(argument("newName", string())
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                ?: return@executes 1
+                            shop.shopname = getString(context, "newName")
+                            shop.updateAsync()
+                            shopEntityList.getOrDefault(shop.id, null)?.customName = Text.of(shop.shopname)
+                            player.sendMessage(tr("commands.execute.success"))
+                            1
+                        }
+                    )
+                )
+                .then(argument("newName", string())
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(literal("of")
+                        .then(argument("shopName", greedyString())
+                            .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
                             .executes { context ->
                                 val player = context.source.player!!
-                                val shop = shopDBService.readByShopName(
-                                    getString(context, "shopName"),
-                                    player.nameForScoreboard,
-                                    context.source.registryManager
-                                ).firstOrNull()
-                                shop?.let {
-                                    val tradeNeedChange = shop.getTradedItem(getItemStackArgument(context, "item"))
-                                    tradeNeedChange?.let {
-                                        val stockToAdd = removeItemFromInventory(
-                                            player,
-                                            getItemStackArgument(context, "item").createStack(1, false),
-                                            player.inventory.count(getItemStackArgument(context, "item").item)
-                                        )
-                                        tradeNeedChange.stock["default"]?.let { stock ->
-                                            if (stock == -1) stockToAdd + 1
-                                            tradeNeedChange.stock["default"] = stock + stockToAdd
-                                        }
-                                        shop.updateAsync()
-                                    } ?: player.sendMessage(tr("commands.shop.create.no_item"))
-                                } ?: player.sendMessage(tr("commands.shops.none"))
+                                val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                    ?: return@executes 1
+                                shop.shopname = getString(context, "newName")
+                                shop.updateAsync()
+                                shopEntityList.getOrDefault(shop.id, null)?.customName = Text.of(shop.shopname)
+                                player.sendMessage(tr("commands.execute.success"))
+                                maybeSendQuotedNameHint(player, shop.shopname)
                                 1
                             }
-                            .then(argument("addedStock", integer(1))
-                                .executes { context ->
-                                    val player = context.source.player!!
-                                    val shop = shopDBService.readByShopName(
-                                        getString(context, "shopName"),
-                                        player.nameForScoreboard,
-                                        context.source.registryManager
-                                    ).firstOrNull()
-                                    shop?.let {
-                                        val tradeNeedChange = shop.getTradedItem(getItemStackArgument(context, "item"))
-                                        tradeNeedChange?.let {
-                                            val stockToAdd = removeItemFromInventory(
-                                                player,
-                                                getItemStackArgument(context, "item").createStack(1, false),
-                                                getInteger(context, "addedStock")
-                                            )
-                                            tradeNeedChange.stock["default"]?.let { stock -> tradeNeedChange.stock["default"] = stock + stockToAdd }
-                                            shop.updateAsync()
-                                        } ?: player.sendMessage(tr("commands.shop.create.no_item"))
-                                    } ?: player.sendMessage(tr("commands.shops.none"))
-                                    1
-                                }
-                            )
                         )
                     )
                 )
-                .then(literal("add")
-                    .then(argument("shopName", string())
-                        .then(argument("item", itemStack(registryAccess))
-                            .then(
-                                argument("numberSoldEachTime", integer(1))
-                                .then(argument("price", doubleArg(0.1))
-                                    .executes { context ->
-                                        val newTradedItem = ItemManager(
-                                            getItemStackArgument(context, "item"),
-                                            getInteger(context, "numberSoldEachTime"),
-                                            getDouble(context, "price"),
-                                            registries = context.source.registryManager
-                                        )
-                                        val player = context.source.player!!
+            )
 
-                                        val shop = shopDBService.readByShopName(
-                                            getString(context, "shopName"),
-                                            player.nameForScoreboard,
-                                            context.source.registryManager
-                                        ).firstOrNull()
-                                        shop?.let {
-                                            if (checkCanAddTradeOffer(it, newTradedItem, player)) {
-                                                it.addTradeOffer(newTradedItem, player)
-                                            }
-                                        } ?: player.sendMessage(tr("commands.shops.none"))
-                                        1
-                                    }
+            .then(literal("move")
+                .executes { context -> openManageGui(context, registryAccess) }
+                .then(argument("shopName", string())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .then(argument("newPos", blockPos())
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                ?: return@executes 1
+                            shopPosChange(context, player, shop, "newPos")
+                        }
+                    )
+                )
+                .then(argument("newPos", blockPos())
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(literal("of")
+                        .then(argument("shopName", greedyString())
+                            .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                            .executes { context ->
+                                val player = context.source.player!!
+                                val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                    ?: return@executes 1
+                                shopPosChange(context, player, shop, "newPos")
+                            }
+                        )
+                    )
+                )
+            )
+
+            .then(literal("stock")
+                .requires { source -> !tempShops.containsKey(source.player!!.uuid) }
+                .executes { context ->
+                    val player = context.source.player!!
+                    ShopManageGui(player, registryAccess).open()
+                    player.sendMessage(tr("gui.manage.stock.entry_hint"))
+                    1
+                }
+                .then(argument("shopName", string())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .then(argument("item", itemStack(registryAccess))
+                        .then(argument("amount", integer(1))
+                            .executes { context ->
+                                addStock(context,
+                                    getItemStackArgument(context, "item").createStack(1, false),
+                                    getInteger(context, "amount"))
+                            }
+                        )
+                        .executes { context ->
+                            val itemStack = getItemStackArgument(context, "item").createStack(1, false)
+                            val player = context.source.player!!
+                            addStock(context, itemStack,
+                                player.inventory.count(getItemStackArgument(context, "item").item))
+                        }
+                    )
+                    .then(argument("amount", integer(1))
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val held = resolveItem(context, player) ?: return@executes 1
+                            addStock(context, held, getInteger(context, "amount"))
+                        }
+                    )
+                    .executes { context ->
+                        val player = context.source.player!!
+                        val held = resolveItem(context, player) ?: return@executes 1
+                        addStock(context, held, player.inventory.count(held.item))
+                    }
+                )
+                .then(literal("hand")
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(argument("amount", integer(1))
+                        .then(argument("shopName", greedyString())
+                            .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                            .executes { context ->
+                                val player = context.source.player!!
+                                val held = resolveItem(context, player) ?: return@executes 1
+                                addStockForShopName(context, getString(context, "shopName"), held, getInteger(context, "amount"))
+                            }
+                        )
+                    )
+                    .then(argument("shopName", greedyString())
+                        .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val held = resolveItem(context, player) ?: return@executes 1
+                            addStockForShopName(context, getString(context, "shopName"), held, player.inventory.count(held.item))
+                        }
+                    )
+                )
+                .then(literal("item")
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(argument("item", itemStack(registryAccess))
+                        .then(argument("amount", integer(1))
+                            .then(argument("shopName", greedyString())
+                                .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                                .executes { context ->
+                                    addStockForShopName(
+                                        context,
+                                        getString(context, "shopName"),
+                                        getItemStackArgument(context, "item").createStack(1, false),
+                                        getInteger(context, "amount")
+                                    )
+                                }
+                            )
+                        )
+                        .then(argument("shopName", greedyString())
+                            .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                            .executes { context ->
+                                val itemStack = getItemStackArgument(context, "item").createStack(1, false)
+                                val player = context.source.player!!
+                                addStockForShopName(context, getString(context, "shopName"), itemStack,
+                                    player.inventory.count(getItemStackArgument(context, "item").item))
+                            }
+                        )
+                    )
+                )
+            )
+
+            .then(literal("item")
+                .requires { source -> !tempShops.containsKey(source.player!!.uuid) }
+                .executes { context -> openManageGui(context, registryAccess) }
+                .then(literal("add")
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(argument("item", itemStack(registryAccess))
+                        .then(argument("qty", integer(1))
+                            .then(argument("price", doubleArg(0.1))
+                                .then(literal("to")
+                                    .then(argument("shopName", greedyString())
+                                        .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                                        .executes { context ->
+                                            val player = context.source.player!!
+                                            val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                                ?: return@executes 1
+                                            val newItem = ItemManager(
+                                                getItemStackArgument(context, "item"),
+                                                getInteger(context, "qty"),
+                                                getDouble(context, "price"),
+                                                registries = context.source.registryManager
+                                            )
+                                            if (checkCanAddTradeOffer(shop, newItem, player)) shop.addTradeOffer(newItem, player)
+                                            1
+                                        }
+                                    )
                                 )
                             )
                         )
                     )
                 )
-                .then(literal("delete")
-                    .then(argument("shopName", string())
-                        .then(argument("item", itemStack(registryAccess))
+                .then(literal("remove")
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(argument("item", itemStack(registryAccess))
+                        .then(literal("from")
+                            .then(argument("shopName", greedyString())
+                                .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                                .executes { context ->
+                                    val player = context.source.player!!
+                                    val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                        ?: return@executes 1
+                                    removeItemFromShop(context, player, shop,
+                                        getItemStackArgument(context, "item").createStack(1, false))
+                                }
+                            )
+                        )
+                    )
+                    .then(literal("from")
+                        .then(argument("shopName", greedyString())
+                            .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
                             .executes { context ->
                                 val player = context.source.player!!
-                                val shop = shopDBService.readByShopName(
-                                    getString(context, "shopName"),
-                                    player.nameForScoreboard,
-                                    context.source.registryManager
-                                ).firstOrNull()
-                                val tradedItemNeedDelete = getItemStackArgument(context, "item")
-
-                                shop?.let {
-                                    val itemInShop = it.getTradedItem(tradedItemNeedDelete)
-                                    val stockInShop = itemInShop?.stock?.get("default") ?: 0
-                                    val action = {
-                                        it.deleteTradedItem(tradedItemNeedDelete)
-                                        player.sendMessage(tr("commands.shop.item.delete.success",
-                                            tradedItemNeedDelete.createStack(1, false).toHoverableText())
-                                        )
-                                        if (stockInShop > 0) {
-                                            player.inventory.offerOrDrop(
-                                                ItemStack(
-                                                    itemInShop?.item?.item,
-                                                    itemInShop?.stock?.get("default") ?: 0
-                                                )
-                                            )
-                                        }
-                                        it.updateAsync()
-                                    }
-                                    addPendingOperation(context, action)
-                                } ?: player.sendMessage(tr("commands.shops.none"))
-                                1
+                                val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                    ?: return@executes 1
+                                val held = resolveItem(context, player) ?: return@executes 1
+                                removeItemFromShop(context, player, shop, held)
                             }
                         )
                     )
                 )
                 .then(literal("change")
-                    .then(argument("shopName", string())
+                    .executes { context -> openManageGui(context, registryAccess) }
+                    .then(argument("item", itemStack(registryAccess))
+                        .then(argument("qty", integer(1))
+                            .then(argument("price", doubleArg(0.1))
+                                .then(literal("in")
+                                    .then(argument("shopName", greedyString())
+                                        .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                                        .executes { context ->
+                                            val player = context.source.player!!
+                                            val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                                ?: return@executes 1
+                                            val toChange = shop.getTradedItem(
+                                                getItemStackArgument(context, "item") as net.minecraft.command.argument.ItemStackArgument)
+                                                ?: run { player.sendMessage(tr("commands.shop.item.none")); return@executes 1 }
+                                            toChange.sellPerTime = getInteger(context, "qty")
+                                            toChange.price = getDouble(context, "price")
+                                            shop.updateAsync()
+                                            player.sendMessage(tr("commands.shop.item.change.success"))
+                                            1
+                                        }
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+                .then(argument("shopName", string())
+                    .suggests { context, builder -> suggestPlayerShopNames(context, builder, registryAccess) }
+                    .then(literal("add")
                         .then(argument("item", itemStack(registryAccess))
-                            .then(
-                                argument("numberSoldEachTime", integer(1))
+                            .then(argument("qty", integer(1))
                                 .then(argument("price", doubleArg(0.1))
                                     .executes { context ->
                                         val player = context.source.player!!
-                                        val shop = shopDBService.readByShopName(
-                                            getString(context, "shopName"),
-                                            player.nameForScoreboard,
-                                            context.source.registryManager
-                                        ).singleOrNull()
-
-                                        shop?.let {
-                                            val tradedItemNeedChange = it.getTradedItem(getItemStackArgument(context, "item"))
-                                            tradedItemNeedChange?.let { item ->
-                                                item.sellPerTime = getInteger(context, "numberSoldEachTime")
-                                                item.price = getDouble(context, "price")
-                                                player.sendMessage(tr("commands.shop.item.change.success"))
-                                            } ?: player.sendMessage(tr("commands.shop.item.none"))
-                                            it.updateAsync()
-                                        }
+                                        val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                            ?: return@executes 1
+                                        val newItem = ItemManager(
+                                            getItemStackArgument(context, "item"),
+                                            getInteger(context, "qty"),
+                                            getDouble(context, "price"),
+                                            registries = context.source.registryManager
+                                        )
+                                        if (checkCanAddTradeOffer(shop, newItem, player)) shop.addTradeOffer(newItem, player)
+                                        1
+                                    }
+                                )
+                            )
+                        )
+                    )
+                    .then(literal("remove")
+                        .then(argument("item", itemStack(registryAccess))
+                            .executes { context ->
+                                val player = context.source.player!!
+                                val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                    ?: return@executes 1
+                                removeItemFromShop(context, player, shop,
+                                    getItemStackArgument(context, "item").createStack(1, false))
+                            }
+                        )
+                        .executes { context ->
+                            val player = context.source.player!!
+                            val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                ?: return@executes 1
+                            val held = resolveItem(context, player) ?: return@executes 1
+                            removeItemFromShop(context, player, shop, held)
+                        }
+                    )
+                    .then(literal("change")
+                        .then(argument("item", itemStack(registryAccess))
+                            .then(argument("qty", integer(1))
+                                .then(argument("price", doubleArg(0.1))
+                                    .executes { context ->
+                                        val player = context.source.player!!
+                                        val shop = findShopByNameOrNotify(getString(context, "shopName"), player, context)
+                                            ?: return@executes 1
+                                        val toChange = shop.getTradedItem(
+                                            getItemStackArgument(context, "item") as net.minecraft.command.argument.ItemStackArgument)
+                                            ?: run { player.sendMessage(tr("commands.shop.item.none")); return@executes 1 }
+                                        toChange.sellPerTime = getInteger(context, "qty")
+                                        toChange.price = getDouble(context, "price")
+                                        shop.updateAsync()
+                                        player.sendMessage(tr("commands.shop.item.change.success"))
                                         1
                                     }
                                 )
@@ -676,82 +640,261 @@ fun register(dispatcher: CommandDispatcher<ServerCommandSource>,
                     )
                 )
             )
-            .then(literal("confirm")
-                .executes { context ->
-                    val playerUUID = context.source.player?.uuid
-                    val pendingOperation = pendingOperations.remove(playerUUID)
-                    pendingOperation?.let {
-                        it.operation()
-                        val textSupplier = Supplier<Text> { tr("commands.confirm.ok") }
-                        context.source.sendFeedback(textSupplier, false)
-                    } ?: run {
-                        val textSupplier = Supplier<Text> { tr("commands.confirm.none") }
-                        context.source.sendFeedback(textSupplier, false)
-                    }
-                    playerUUID?.let { cancelPendingOperationJob(it) }
-                    1
-                }
+        )
+
+        // ── /vs admin ...  (CLI only) ───────────────────────────────────────
+        .then(literal("admin")
+            .then(literal("tax")
+                .requires { source -> Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) }
+                .then(argument("rate", doubleArg())
+                    .executes { context -> taxRateChange(context, getDouble(context, "rate")) }
+                )
             )
-            .then(literal("cancel")
-                .executes { context ->
-                    val playerUUID = context.source.player?.uuid
-                    val textSupplier: Supplier<Text> =
-                    pendingOperations.remove(playerUUID)?.let {
-                        Supplier<Text> { tr("commands.cancel.ok") }
-                    } ?: run {
-                        Supplier<Text> { tr("commands.cancel.none") }
-                    }
-                    context.source.sendFeedback(textSupplier, false)
-                    playerUUID?.let { cancelPendingOperationJob(it) }
-                    1
-                }
+            .then(literal("reload")
+                .requires { source -> Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) }
+                .executes { context -> reload(context) }
             )
+            .then(literal("respawn")
+                .requires { source ->
+                    Permissions.check(source, VillagerShopMain.MOD_ID + ".admin", 3) &&
+                        !tempShops.containsKey(source.player!!.uuid)
+                }
+                .then(argument("id", integer(1))
+                    .executes { context ->
+                        val player = context.source.player!!
+                        val shop = findShopById(getInteger(context, "id"), context)
+                            ?: run { player.sendMessage(tr("commands.search.none")); return@executes 1 }
+                        val world = context.source.world
+                        if (world.registryKey.value.toString() == shop.world) {
+                            shop.spawnOrRespawn(world)
+                            player.sendMessage(tr("commands.execute.success"))
+                        } else {
+                            player.sendMessage(tr("commands.failed"))
+                        }
+                        1
+                    }
+                )
+            )
+            .then(literal("search")
+                .requires(Permissions.require(VillagerShopMain.MOD_ID + ".manage", 2))
+                .then(argument("condition", greedyString())
+                    .executes { context -> rangeSearch(context, getString(context, "condition")) }
+                )
+            )
+            .then(literal("setAdmin")
+                .requires(Permissions.require(VillagerShopMain.MOD_ID + ".admin", 3))
+                .then(argument("id", integer(1))
+                    .executes { context ->
+                        val shop = findShopById(getInteger(context, "id"), context)
+                            ?: run {
+                                context.source.sendFeedback(Supplier { tr("commands.shops.none") }, true)
+                                return@executes 1
+                            }
+                        addPendingOperation(context) {
+                            shop.setAdmin()
+                            context.source.sendFeedback(Supplier { tr("commands.setadmin.ok") }, true)
+                        }
+                        1
+                    }
+                )
+            )
+        )
+
+        // ── /vs confirm / /vs cancel  ─────────────────────────────────────
+        .then(literal("confirm")
+            .requires { source -> pendingOperations.containsKey(source.player!!.uuid) }
+            .executes { context ->
+                val player = context.source.player!!
+                val uuid = player.uuid
+                val op = pendingOperations.remove(uuid)
+                if (op != null) {
+                    op.operation()
+                    context.source.sendFeedback(Supplier { tr("commands.confirm.ok") }, false)
+                } else {
+                    context.source.sendFeedback(Supplier { tr("commands.confirm.none") }, false)
+                }
+                cancelPendingOperationJob(uuid)
+                refreshCommandTree(player)
+                1
+            }
+        )
+        .then(literal("cancel")
+            .requires { source -> pendingOperations.containsKey(source.player!!.uuid) }
+            .executes { context ->
+                val player = context.source.player!!
+                val uuid = player.uuid
+                val hadOp = pendingOperations.remove(uuid) != null
+                context.source.sendFeedback(
+                    Supplier { if (hadOp) tr("commands.cancel.ok") else tr("commands.cancel.none") },
+                    false
+                )
+                cancelPendingOperationJob(uuid)
+                refreshCommandTree(player)
+                1
+            }
+        )
+
+
+
     val villagerShopCommandNode = dispatcher.register(builder)
     dispatcher.register(literal("vlsp").redirect(villagerShopCommandNode))
 }
 
-private fun shopPosChange(context: CommandContext<ServerCommandSource>, player: ServerPlayerEntity, shop: ShopEntity?) : Int {
-    val newPos = getBlockPos(context, "newShopPos")
+// ─── Private helpers ─────────────────────────────────────────────────────────
 
-    shop?.let {
-        shop.posX = newPos.x
-        shop.posY = newPos.y
-        shop.posZ = newPos.z
+private fun openCreateGui(context: CommandContext<ServerCommandSource>, registryAccess: CommandRegistryAccess): Int {
+    ShopCreateGui(context.source.player!!, registryAccess).open()
+    return 1
+}
+
+private fun openManageGui(context: CommandContext<ServerCommandSource>, registryAccess: CommandRegistryAccess): Int {
+    ShopManageGui(context.source.player!!, registryAccess).open()
+    return 1
+}
+
+private fun suggestPlayerShopNames(
+    context: CommandContext<ServerCommandSource>,
+    builder: SuggestionsBuilder,
+    registryAccess: CommandRegistryAccess
+): CompletableFuture<Suggestions> {
+    val player = context.source.player ?: return builder.buildFuture()
+    shopDBService.readByOwner(player.nameForScoreboard, registryAccess)
+        .forEach { builder.suggest(it.shopname) }
+    return builder.buildFuture()
+}
+
+/** Adds an item to the active temp shop. Assumes stock has already been resolved. */
+private fun addItemToTempShop(context: CommandContext<ServerCommandSource>, stock: Int): Int {
+    val player = context.source.player!!
+    val tempShop = tempShops[player.uuid]!!
+    tempShop.shopEntity.addTradeOffer(
+        ItemManager(
+            getItemStackArgument(context, "item"),
+            getInteger(context, "quantitySoldEachTime"),
+            getDouble(context, "price"),
+            mutableMapOf("default" to stock),
+            context.source.registryManager
+        ),
+        player
+    )
+    player.sendMessage(tr("commands.shop.item.add.success"))
+    player.sendMessage(tr("commands.shop.item.continue.or.submit",
+        CommandUtil.getSuggestCommandText("/villagerShop create addItem"),
+        CommandUtil.getSuggestCommandText("/villagerShop create submit")))
+    player.sendMessage(tr("commands.shop.item.remove",
+        CommandUtil.getSuggestCommandText("/villagerShop create removeItem")))
+    return 1
+}
+
+/** Submits the temp shop immediately, without a confirm step. */
+private fun submitTempShop(context: CommandContext<ServerCommandSource>): Int {
+    val player = context.source.player!!
+    val tempShop = tempShops[player.uuid]!!
+    val shopEntity = tempShop.shopEntity
+
+    if (tempShop.shopType == 0) {
+        calculateAndTakeMoney(player, tempShop.takeMoney)
+        shopEntity.playerShopCreate()
+    } else if (Permissions.check(context.source, VillagerShopMain.MOD_ID + ".admin", 3)) {
+        shopEntity.adminShopCreate()
+    } else {
+        player.sendMessage(tr("commands.shop.create.premission"))
+        return 1
+    }
+
+    val newShopEntity = shopEntity.spawnOrRespawn(context.source.world)
+    synchronized(shopEntityList) { shopEntityList[shopEntity.id] = newShopEntity }
+    tempShops.remove(player.uuid)
+    player.sendMessage(tr("commands.shop.create.success"))
+    refreshCommandTree(player)
+    return 1
+}
+
+/** Adds stock to a shop item, taking items from the player's inventory. */
+private fun addStock(
+    context: CommandContext<ServerCommandSource>,
+    itemStack: ItemStack,
+    requestedAmount: Int
+): Int {
+    val player = context.source.player!!
+    val shopName = getString(context, "shopName")
+    return addStockForShopName(context, shopName, itemStack, requestedAmount)
+}
+
+private fun addStockForShopName(
+    context: CommandContext<ServerCommandSource>,
+    shopName: String,
+    itemStack: ItemStack,
+    requestedAmount: Int
+): Int {
+    val player = context.source.player!!
+    val shop = findShopByNameOrNotify(shopName, player, context) ?: return 1
+    val traded = shop.getTradedItem(itemStack)
+        ?: run { player.sendMessage(tr("commands.shop.create.no_item")); return 1 }
+    val taken = removeItemFromInventory(player, itemStack.copyWithCount(1), requestedAmount)
+    traded.stock["default"] = (traded.stock["default"] ?: 0) + taken
+    shop.updateAsync()
+    player.sendMessage(tr("commands.stock.add.ok", taken))
+    return 1
+}
+
+/** Removes an item from a shop with a confirm prompt, returning stock to player. */
+private fun removeItemFromShop(
+    context: CommandContext<ServerCommandSource>,
+    player: ServerPlayerEntity,
+    shop: ShopEntity,
+    itemStack: ItemStack
+): Int {
+    val itemInShop = shop.getTradedItem(itemStack)
+        ?: run { player.sendMessage(tr("commands.shop.item.none")); return 1 }
+    val stockBack = itemInShop.stock["default"] ?: 0
+    addPendingOperation(context) {
+        shop.deleteTradedItem(itemStack)
+        player.sendMessage(tr("commands.shop.item.delete.success", itemStack.toHoverableText()))
+        if (stockBack > 0)
+            player.inventory.offerOrDrop(ItemStack(itemInShop.item.item, stockBack))
         shop.updateAsync()
+    }
+    return 1
+}
 
-        val shopEntity = shopEntityList.getOrDefault(it.id, null)
-        shopEntity?.setPos(
-            newPos.x.toDouble() + 0.5,
-            newPos.y.toDouble() + 1,
-            newPos.z.toDouble() + 0.5
-        )
-        player.sendMessage(tr("commands.execute.success"))
-    } ?: player.sendMessage(tr("commands.shops.none"))
+private fun shopPosChange(
+    context: CommandContext<ServerCommandSource>,
+    player: ServerPlayerEntity,
+    shop: ShopEntity?,
+    posArgName: String = "newShopPos"
+): Int {
+    shop ?: run { player.sendMessage(tr("commands.shops.none")); return 1 }
+    val newPos = getBlockPos(context, posArgName)
+    shop.posX = newPos.x; shop.posY = newPos.y; shop.posZ = newPos.z
+    shop.updateAsync()
+    shopEntityList.getOrDefault(shop.id, null)?.setPos(
+        newPos.x + 0.5, newPos.y + 1.0, newPos.z + 0.5
+    )
+    player.sendMessage(tr("commands.execute.success"))
     return 1
 }
 
 private fun refreshCommandTree(player: ServerPlayerEntity) {
-    player.server.execute {
-        player.server.playerManager.sendCommandTree(player)
-    }
+    player.server.execute { player.server.playerManager.sendCommandTree(player) }
 }
 
 private fun addPendingOperation(context: CommandContext<ServerCommandSource>, operation: () -> Unit) {
     val player = context.source.player!!
-    val playerUUID = player.uuid
-    if (pendingOperations.containsKey(playerUUID)) {
+    val uuid = player.uuid
+    if (pendingOperations.containsKey(uuid)) {
         context.source.sendError(tr("commands.confirm.already.have"))
     } else {
-        pendingOperations[playerUUID] = PendingOperation(playerUUID, operation)
-        val command = CommandUtil.getSuggestCommandText("/villagerShop confirm")
-        player.sendMessage(tr("commands.confirm.need", command))
+        pendingOperations[uuid] = PendingOperation(uuid, operation)
+        player.sendMessage(tr("commands.confirm.need",
+            CommandUtil.getSuggestCommandText("/villagerShop confirm")))
+        PendingConfirmGui.open(player)
+        refreshCommandTree(player)
         coroutineScope(context)
     }
 }
 
 private fun suggestOptions(builder: SuggestionsBuilder, options: List<String>): CompletableFuture<Suggestions> {
-    options.forEach { option ->
-        builder.suggest(option)
-    }
+    options.forEach { builder.suggest(it) }
     return builder.buildFuture()
 }

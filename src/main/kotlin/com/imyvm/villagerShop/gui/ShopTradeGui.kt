@@ -9,7 +9,6 @@ import com.imyvm.villagerShop.apis.customScope
 import com.imyvm.villagerShop.shops.ShopEntity
 import eu.pb4.sgui.api.ClickType
 import eu.pb4.sgui.api.gui.MerchantGui
-import kotlinx.coroutines.launch
 import net.minecraft.component.DataComponentTypes
 import net.minecraft.component.type.LoreComponent
 import net.minecraft.component.type.NbtComponent
@@ -28,13 +27,11 @@ import net.minecraft.village.TradedItem
 import java.time.LocalDate
 import java.util.regex.Matcher
 import java.util.regex.Pattern
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 
-class ShopTradeGui(
-    private val playerEntity: ServerPlayerEntity,
-    private val registries: RegistryWrapper.WrapperLookup
-) {
+class ShopTrade(private val playerEntity: ServerPlayerEntity, private val registries: RegistryWrapper.WrapperLookup) {
     private val gui = object : MerchantGui(playerEntity, false) {
         override fun onAnyClick(index: Int, type: ClickType?, action: SlotActionType?): Boolean {
             if (index == 0 || index == 1) {
@@ -152,7 +149,7 @@ class ShopTradeGui(
                     player.sendMessage(tr("shop.purchase.success", moneyShouldGetOnce * sellTimes))
                     this.sendUpdate()
                 }
-                shopEntity?.updateAsync()
+                shopEntity?.let { shop -> customScope.launch { shopDBService.dbQueryAsync { shopDBService.update(shop) } } }
             }
             return super.onAnyClick(index, type, action)
         }
@@ -163,7 +160,7 @@ class ShopTradeGui(
 
         override fun onClose() {
             villagerEntity?.let { removeGui(it) }
-            shopEntity?.updateAsync()
+            shopEntity?.let { shop -> customScope.launch { shopDBService.dbQueryAsync { shopDBService.update(shop) } } }
             super.onClose()
         }
     }
@@ -189,16 +186,15 @@ class ShopTradeGui(
             return
         }
 
+        addGui(villager)
+
         customScope.launch {
             val loadedShop = shopDBService.dbQueryAsync {
                 shopDBService.readById(id, registries)
             }
             playerEntity.server.execute {
                 shopEntity = loadedShop
-                if (shopEntity != null) {
-                    addGui(villager)
-                    buildAndOpenGui()
-                }
+                buildAndOpenGui()
             }
         }
     }
