@@ -2,8 +2,8 @@ package com.imyvm.villagerShop.gui
 
 import eu.pb4.sgui.api.elements.GuiElementBuilder
 import eu.pb4.sgui.api.gui.SimpleGui
-import net.minecraft.item.Items
-import net.minecraft.text.Text
+import net.minecraft.network.chat.Component
+import net.minecraft.world.item.Items
 
 // ─── Shared GUI layout helpers used by ShopCreateGui and ShopManageGui ───────
 
@@ -27,7 +27,7 @@ internal fun glassPane(color: Int = 7): GuiElementBuilder {
         15 -> Items.BLACK_STAINED_GLASS_PANE
         else -> Items.GRAY_STAINED_GLASS_PANE
     }
-    return GuiElementBuilder(item).setName(Text.literal(" "))
+    return GuiElementBuilder(item).setName(Component.literal(" "))
 }
 
 /** Fills the outer border of a [rows]×9 GUI with grey glass panes. */

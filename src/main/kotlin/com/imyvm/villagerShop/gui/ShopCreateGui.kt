@@ -24,14 +24,15 @@ import eu.pb4.sgui.api.gui.AnvilInputGui
 import eu.pb4.sgui.api.gui.SimpleGui
 import kotlinx.coroutines.launch
 import me.lucko.fabric.api.permissions.v0.Permissions
-import net.minecraft.command.CommandRegistryAccess
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
-import net.minecraft.registry.RegistryWrapper
-import net.minecraft.screen.ScreenHandlerType
-import net.minecraft.server.network.ServerPlayerEntity
-import net.minecraft.text.Text
-import net.minecraft.util.math.BlockPos
+import net.minecraft.commands.CommandBuildContext
+import net.minecraft.core.BlockPos
+import net.minecraft.core.HolderLookup
+import net.minecraft.network.chat.Component
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.server.permissions.PermissionLevel
+import net.minecraft.world.inventory.MenuType
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 // glassPane() and border() are defined in GuiHelpers.kt (same package)
@@ -51,15 +52,15 @@ private sealed class ContainerSource {
 // ─── ShopCreateGui ──────────────────────────────────────────────────────────
 
 class ShopCreateGui(
-    private val playerEntity: ServerPlayerEntity,
-    private val registryAccess: CommandRegistryAccess
+    private val playerEntity: ServerPlayer,
+    private val registryAccess: CommandBuildContext
 ) {
-    private val registries: RegistryWrapper.WrapperLookup = registryAccess
+    private val registries: HolderLookup.Provider = registryAccess
 
-    private fun buildAnvilInputItem(icon: ItemStack, hint: Text): GuiElementBuilder =
+    private fun buildAnvilInputItem(icon: ItemStack, hint: Component): GuiElementBuilder =
         GuiElementBuilder.from(icon.copy())
             // Keep the anvil input blank so players can type directly without deleting prompt text.
-            .setName(Text.literal(" "))
+            .setName(Component.literal(" "))
             .addLoreLine(hint)
 
     private fun parseQuickValue(clickType: ClickType, left: String, right: String): String? = when (clickType) {
@@ -73,8 +74,8 @@ class ShopCreateGui(
     // ── Step 1: choose shop type ────────────────────────────────────────────
 
     private fun openTypeSelectPage() {
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X3, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x3, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.step1.title")
         border(gui, 3)
@@ -85,7 +86,7 @@ class ShopCreateGui(
             .setCallback { _, _, _, _ -> openNameInputPage(isAdmin = false) }
         )
 
-        if (Permissions.check(playerEntity, VillagerShopMain.MOD_ID + ".admin", 3)) {
+        if (Permissions.check(playerEntity, VillagerShopMain.MOD_ID + ".admin", PermissionLevel.ADMINS)) {
             gui.setSlot(15, GuiElementBuilder(Items.ENDER_CHEST)
                 .setName(tr("gui.create.type.admin"))
                 .addLoreLine(tr("gui.create.type.admin.lore"))
@@ -100,8 +101,8 @@ class ShopCreateGui(
     // ── Step 1b: admin – choose ShopType ───────────────────────────────────
 
     private fun openAdminTypeSelectPage() {
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X3, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x3, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.step1b.title")
         border(gui, 3)
@@ -131,7 +132,7 @@ class ShopCreateGui(
 
     private fun openNameInputPage(isAdmin: Boolean, adminShopType: ShopType = ShopType.SELL) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.step2.title")
@@ -141,9 +142,9 @@ class ShopCreateGui(
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val name = anvilGui.input.trim()
-                if (name.isEmpty()) { playerEntity.sendMessage(tr("gui.create.name.empty")); return@setCallback }
-                if (!checkCanCreateShop(name, playerEntity.nameForScoreboard, registryAccess)) {
-                    playerEntity.sendMessage(tr("commands.shop.create.name_used")); return@setCallback
+                if (name.isEmpty()) { playerEntity.sendSystemMessage(tr("gui.create.name.empty")); return@setCallback }
+                if (!checkCanCreateShop(name, playerEntity.scoreboardName, registryAccess)) {
+                    playerEntity.sendSystemMessage(tr("commands.shop.create.name_used")); return@setCallback
                 }
                 anvilGui.close()
                 openPosConfirmPage(name, isAdmin, adminShopType)
@@ -158,15 +159,15 @@ class ShopCreateGui(
         shopName: String,
         isAdmin: Boolean,
         adminShopType: ShopType,
-        basePos: BlockPos = playerEntity.blockPos,
+        basePos: BlockPos = playerEntity.blockPosition(),
         offsetX: Int = 0,
         offsetY: Int = 0,
         offsetZ: Int = 0
     ) {
         val pos = BlockPos(basePos.x + offsetX, basePos.y + offsetY, basePos.z + offsetZ)
 
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X5, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x5, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.step3.title")
 
@@ -192,7 +193,7 @@ class ShopCreateGui(
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX - 1, offsetY, offsetZ) }
         )
         gui.setSlot(13, GuiElementBuilder(Items.WHITE_CONCRETE)
-            .setName(Text.literal("X: ${pos.x}  (${if (offsetX >= 0) "+$offsetX" else "$offsetX"})"))
+            .setName(Component.literal("X: ${pos.x}  (${if (offsetX >= 0) "+$offsetX" else "$offsetX"})"))
         )
         gui.setSlot(15, GuiElementBuilder(Items.ORANGE_CONCRETE)
             .setName(tr("gui.create.pos.x_plus", 1))
@@ -237,7 +238,7 @@ class ShopCreateGui(
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY, offsetZ - 1) }
         )
         gui.setSlot(31, GuiElementBuilder(Items.WHITE_CONCRETE)
-            .setName(Text.literal("Z: ${pos.z}  (${if (offsetZ >= 0) "+$offsetZ" else "$offsetZ"})"))
+            .setName(Component.literal("Z: ${pos.z}  (${if (offsetZ >= 0) "+$offsetZ" else "$offsetZ"})"))
         )
         gui.setSlot(33, GuiElementBuilder(Items.LIME_CONCRETE)
             .setName(tr("gui.create.pos.z_plus", 1))
@@ -255,7 +256,7 @@ class ShopCreateGui(
         )
         gui.setSlot(40, GuiElementBuilder(Items.BARRIER)
             .setName(tr("gui.create.pos.reset"))
-            .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, playerEntity.blockPos) }
+            .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, playerEntity.blockPosition()) }
         )
         gui.setSlot(44, GuiElementBuilder(Items.EMERALD)
             .setName(tr("gui.create.pos.confirm"))
@@ -276,15 +277,15 @@ class ShopCreateGui(
         draft: ShopEntity = ShopEntity(
             id = -1, shopname = shopName,
             posX = pos.x, posY = pos.y, posZ = pos.z,
-            world = playerEntity.world.registryKey.value.toString(),
+            world = playerEntity.level().dimension().identifier().toString(),
             admin = if (isAdmin) 1 else 0,
             type = if (isAdmin) adminShopType else ShopType.SELL,
-            owner = playerEntity.nameForScoreboard, ownerUUID = playerEntity.uuid,
+            owner = playerEntity.scoreboardName, ownerUUID = playerEntity.uuid,
             items = mutableListOf(), income = 0.0
         )
     ) {
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X4, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x4, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.step4.title", draft.items.size, 7)
 
@@ -295,7 +296,7 @@ class ShopCreateGui(
             if (idx < 7) {
                 // Display items starting at slot 1, spaced every 2 (so: 1,3,5,7,9,11,13)
                 gui.setSlot(idx * 2 + 1, GuiElementBuilder.from(item.item.itemStack.copy())
-                    .setName(item.item.itemStack.toHoverableText())
+                    .setName(item.item.itemStack.hoverName)
                     .addLoreLine(tr("gui.create.item.price", item.price))
                     .addLoreLine(tr("gui.create.item.qty", item.sellPerTime))
                     .addLoreLine(tr("gui.create.item.stock", item.stock["default"] ?: 0))
@@ -303,7 +304,7 @@ class ShopCreateGui(
                     .setCallback { _, _, _, _ ->
                         val stockBack = item.stock["default"] ?: 0
                         if (!isAdmin && stockBack > 0)
-                            playerEntity.inventory.offerOrDrop(ItemStack(item.item.item, stockBack))
+                            playerEntity.inventory.placeItemBackInInventory(ItemStack(item.item.item, stockBack))
                         draft.items.remove(item)
                         openItemListPage(shopName, isAdmin, adminShopType, pos, draft)
                     }
@@ -334,7 +335,7 @@ class ShopCreateGui(
 
         // Slot 31: Shop info
         gui.setSlot(31, GuiElementBuilder(Items.OAK_SIGN)
-            .setName(Text.literal(draft.shopname))
+            .setName(Component.literal(draft.shopname))
             .addLoreLine(tr("gui.create.info.pos", pos.x, pos.y, pos.z))
             .addLoreLine(tr("gui.create.info.type", draft.type.name))
             .addLoreLine(tr("gui.create.info.items", draft.items.size))
@@ -367,8 +368,8 @@ class ShopCreateGui(
         draft: ShopEntity,
         page: Int = 0
     ) {
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X5, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x5, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.add_item.title")
 
@@ -376,10 +377,10 @@ class ShopCreateGui(
         val inv = playerEntity.inventory
         // Key: item registry id + encoded components string → Pair(representative stack, total count)
         val merged = linkedMapOf<String, Pair<ItemStack, Int>>()
-        for (slot in 0 until inv.size()) {
-            val stack = inv.getStack(slot)
+        for (slot in 0 until inv.containerSize) {
+            val stack = inv.getItem(slot)
             if (stack.isEmpty) continue
-            val key = net.minecraft.registry.Registries.ITEM.getId(stack.item).toString() +
+            val key = net.minecraft.core.registries.BuiltInRegistries.ITEM.getId(stack.item).toString() +
                       "|" + stack.components.toString()
             val existing = merged[key]
             if (existing == null) {
@@ -391,7 +392,7 @@ class ShopCreateGui(
 
         // Filter out items already in draft (same type+components)
         val draftKeys = draft.items.map { item ->
-            net.minecraft.registry.Registries.ITEM.getId(item.item.item.value()).toString() +
+            net.minecraft.core.registries.BuiltInRegistries.ITEM.getId(item.item.item.value()).toString() +
             "|" + item.item.itemStack.components.toString()
         }.toSet()
 
@@ -413,7 +414,7 @@ class ShopCreateGui(
             val capturedStack = stack.copy()
             val capturedCount = totalCount
             gui.setSlot(idx, GuiElementBuilder.from(capturedStack.copyWithCount(minOf(capturedCount, 64)))
-                .setName(capturedStack.toHoverableText())
+                .setName(capturedStack.hoverName)
                 .addLoreLine(tr("gui.create.add_item.total", capturedCount))
                 .addLoreLine(tr("gui.create.add_item.click_select"))
                 .setCallback { _, _, _, _ ->
@@ -477,7 +478,7 @@ class ShopCreateGui(
         val invContainers = findContainersInInventory(playerEntity)
             .map { (slot, stack) -> ContainerSource.InventorySlot(slot, stack) }
 
-        val worldBoxes = findShulkerBoxesInWorld(playerEntity.serverWorld, playerEntity.blockPos)
+        val worldBoxes = findShulkerBoxesInWorld(playerEntity.level(), playerEntity.blockPosition())
             .map { (boxPos, _) -> ContainerSource.WorldBlock(boxPos) }
 
         val allSources: List<ContainerSource> = invContainers + worldBoxes
@@ -487,8 +488,8 @@ class ShopCreateGui(
         val currentPage = page.coerceIn(0, totalPages - 1)
         val pageSources = allSources.drop(currentPage * itemsPerPage).take(itemsPerPage)
 
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X5, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x5, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.container.title")
 
@@ -499,8 +500,8 @@ class ShopCreateGui(
             when (source) {
                 is ContainerSource.InventorySlot -> {
                     val stack = source.stack
-                    val name = if (stack.name.string.isNotBlank()) stack.name
-                               else Text.translatable(stack.translationKey)
+                    val name = if (stack.hoverName.string.isNotBlank()) stack.hoverName
+                               else Component.translatable(stack.item.descriptionId)
                     gui.setSlot(idx, GuiElementBuilder.from(stack.copyWithCount(1))
                         .setName(name)
                         .addLoreLine(tr("gui.create.container.inv_slot", source.invSlot))
@@ -512,7 +513,7 @@ class ShopCreateGui(
                     )
                 }
                 is ContainerSource.WorldBlock -> {
-                    val blockState = playerEntity.serverWorld.getBlockState(source.pos)
+                    val blockState = playerEntity.level().getBlockState(source.pos)
                     val blockItem = blockState.block.asItem()
                     val icon = if (blockItem != Items.AIR) blockItem
                                else Items.SHULKER_BOX
@@ -587,12 +588,12 @@ class ShopCreateGui(
         val merged: LinkedHashMap<String, Pair<ItemStack, Int>> = when (source) {
             is ContainerSource.InventorySlot -> {
                 // Re-read from live inventory in case it changed
-                val liveStack = playerEntity.inventory.getStack(source.invSlot)
+                val liveStack = playerEntity.inventory.getItem(source.invSlot)
                 if (liveStack.isEmpty) linkedMapOf()
                 else getItemsInsideContainerStack(liveStack)
             }
             is ContainerSource.WorldBlock -> {
-                findShulkerBoxesInWorld(playerEntity.serverWorld, source.pos, 0)
+                findShulkerBoxesInWorld(playerEntity.level(), source.pos, 0)
                     .firstOrNull()?.second ?: linkedMapOf()
             }
             is ContainerSource.EnderChest -> ItemManager.getItemsInEnderChest(playerEntity)
@@ -600,7 +601,7 @@ class ShopCreateGui(
 
         // Filter out items already in draft
         val draftKeys = draft.items.map { item ->
-            net.minecraft.registry.Registries.ITEM.getId(item.item.item.value()).toString() +
+            net.minecraft.core.registries.BuiltInRegistries.ITEM.getId(item.item.item.value()).toString() +
             "|" + item.item.itemStack.components.toString()
         }.toSet()
         val availableItems = merged.entries.filter { it.key !in draftKeys }.map { it.value }
@@ -612,15 +613,15 @@ class ShopCreateGui(
 
         // Container display name for title
         val containerLabel: String = when (source) {
-            is ContainerSource.InventorySlot -> source.stack.name.string.ifBlank {
-                playerEntity.server.registryManager.let { source.stack.translationKey }
+            is ContainerSource.InventorySlot -> source.stack.hoverName.string.ifBlank {
+                playerEntity.level().server.registryAccess().let { source.stack.item.descriptionId }
             }
             is ContainerSource.WorldBlock -> "(${source.pos.x}, ${source.pos.y}, ${source.pos.z})"
             is ContainerSource.EnderChest -> tr("gui.create.container.ender_chest").string
         }
 
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X5, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x5, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.create.container.contents.title", containerLabel)
 
@@ -632,7 +633,7 @@ class ShopCreateGui(
             val capturedCount = totalCount
             val capturedSource = source
             gui.setSlot(idx, GuiElementBuilder.from(capturedStack.copyWithCount(minOf(capturedCount, 64)))
-                .setName(capturedStack.toHoverableText())
+                .setName(capturedStack.hoverName)
                 .addLoreLine(tr("gui.create.add_item.total", capturedCount))
                 .addLoreLine(tr("gui.create.add_item.click_select"))
                 .setCallback { _, _, _, _ ->
@@ -688,7 +689,7 @@ class ShopCreateGui(
         source: ContainerSource
     ) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.qty.title")
@@ -721,13 +722,13 @@ class ShopCreateGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val qty = anvilGui.input.trim().toIntOrNull()
                 if (qty == null || qty < 1 || qty > 99) {
-                    playerEntity.sendMessage(tr("gui.create.qty.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.invalid"))
                     anvilGui.close()
                     openQtyInputPageFromContainer(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount, source)
                     return@setCallback
                 }
                 if (!isAdmin && qty > totalCount) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", totalCount))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", totalCount))
                     anvilGui.close()
                     openQtyInputPageFromContainer(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount, source)
                     return@setCallback
@@ -752,7 +753,7 @@ class ShopCreateGui(
         source: ContainerSource
     ) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.price.title")
@@ -776,7 +777,7 @@ class ShopCreateGui(
                             removeItemFromShulkerBoxesInInventory(playerEntity, selectedStack.copyWithCount(1), qty)
                         is ContainerSource.WorldBlock ->
                             removeItemFromShulkerBoxBlockEntity(
-                                playerEntity.serverWorld, source.pos, selectedStack.copyWithCount(1), qty)
+                                playerEntity.level(), source.pos, selectedStack.copyWithCount(1), qty)
                         is ContainerSource.EnderChest ->
                             ItemManager.removeItemFromEnderChest(playerEntity, selectedStack.copyWithCount(1), qty)
                     }
@@ -795,7 +796,7 @@ class ShopCreateGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val price = anvilGui.input.trim().toDoubleOrNull()
                 if (price == null || price < 0.1) {
-                    playerEntity.sendMessage(tr("gui.create.price.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.price.invalid"))
                     anvilGui.close()
                     openPriceInputPageFromContainer(shopName, isAdmin, adminShopType, pos, draft, selectedStack, qty, totalCount, source)
                     return@setCallback
@@ -810,7 +811,7 @@ class ShopCreateGui(
                             removeItemFromShulkerBoxesInInventory(playerEntity, selectedStack.copyWithCount(1), qty)
                         is ContainerSource.WorldBlock ->
                             removeItemFromShulkerBoxBlockEntity(
-                                playerEntity.serverWorld, source.pos, selectedStack.copyWithCount(1), qty)
+                                playerEntity.level(), source.pos, selectedStack.copyWithCount(1), qty)
                         is ContainerSource.EnderChest ->
                             ItemManager.removeItemFromEnderChest(playerEntity, selectedStack.copyWithCount(1), qty)
                     }
@@ -839,7 +840,7 @@ class ShopCreateGui(
         totalCount: Int = 0
     ) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.qty.title")
@@ -865,13 +866,13 @@ class ShopCreateGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val qty = anvilGui.input.trim().toIntOrNull()
                 if (qty == null || qty < 1 || qty > 99) {
-                    playerEntity.sendMessage(tr("gui.create.qty.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.invalid"))
                     anvilGui.close()
                     openQtyInputPage(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount)
                     return@setCallback
                 }
                 if (!isAdmin && qty > totalCount) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", totalCount))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", totalCount))
                     anvilGui.close()
                     openQtyInputPage(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount)
                     return@setCallback
@@ -896,7 +897,7 @@ class ShopCreateGui(
         totalCount: Int = 0
     ) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.price.title")
@@ -929,7 +930,7 @@ class ShopCreateGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val price = anvilGui.input.trim().toDoubleOrNull()
                 if (price == null || price < 0.1) {
-                    playerEntity.sendMessage(tr("gui.create.price.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.price.invalid"))
                     anvilGui.close()
                     openPriceNumberInputPage(shopName, isAdmin, adminShopType, pos, draft, selectedStack, qty, totalCount)
                     return@setCallback
@@ -960,7 +961,7 @@ class ShopCreateGui(
         price: Double
     ) {
         val anvilGui = object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
         anvilGui.title = tr("gui.create.stock.title")
@@ -983,7 +984,7 @@ class ShopCreateGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val stock = anvilGui.input.trim().toIntOrNull()
                 if (stock == null || stock < 0) {
-                    playerEntity.sendMessage(tr("gui.create.stock.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.stock.invalid"))
                     anvilGui.close()
                     openAdminStockInputPage(shopName, adminShopType, pos, draft, selectedStack, qty, price)
                     return@setCallback
@@ -1001,16 +1002,15 @@ class ShopCreateGui(
 
     private fun buildItemManager(stack: ItemStack, qty: Int, price: Double, stock: Int): ItemManager? {
         return try {
-            val entry = net.minecraft.registry.Registries.ITEM
-                .getEntry(net.minecraft.registry.Registries.ITEM.getKey(stack.item).get()).get()
-            val tradedItem = net.minecraft.village.TradedItem(
+            val entry = net.minecraft.core.registries.BuiltInRegistries.ITEM.wrapAsHolder(stack.item)
+            val tradedItem = net.minecraft.world.item.trading.ItemCost(
                 entry, qty,
-                net.minecraft.predicate.ComponentPredicate.of(stack.copyWithCount(qty).components),
+                net.minecraft.core.component.DataComponentExactPredicate.allOf(stack.copyWithCount(qty).components),
                 stack.copyWithCount(qty)
             )
             ItemManager(tradedItem, qty, price, mutableMapOf("default" to stock), registries)
         } catch (_: Exception) {
-            playerEntity.sendMessage(tr("gui.create.item.error"))
+            playerEntity.sendSystemMessage(tr("gui.create.item.error"))
             null
         }
     }
@@ -1018,8 +1018,8 @@ class ShopCreateGui(
     // ── Final: submit ────────────────────────────────────────────────────────
 
     private fun openSubmitConfirmPage(draft: ShopEntity, isAdmin: Boolean) {
-        val gui = object : SimpleGui(ScreenHandlerType.GENERIC_9X3, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+        val gui = object : SimpleGui(MenuType.GENERIC_9x3, playerEntity, false) {
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
         gui.title = tr("gui.confirm.title")
         border(gui, 3)
@@ -1056,14 +1056,14 @@ class ShopCreateGui(
     }
 
     private fun doSubmit(draft: ShopEntity, isAdmin: Boolean) {
-        val world = playerEntity.serverWorld
+        val world = playerEntity.level()
         if (isAdmin) {
             customScope.launch {
                 draft.adminShopCreate()
-                playerEntity.server.execute {
+                playerEntity.level().server.execute {
                     val entity = draft.spawnOrRespawn(world)
                     synchronized(shopEntityList) { shopEntityList[draft.id] = entity }
-                    playerEntity.sendMessage(tr("commands.shop.create.success"))
+                    playerEntity.sendSystemMessage(tr("commands.shop.create.success"))
                     notifyNameCommandHintIfNeeded(draft.shopname)
                     removeGui(playerEntity)
                 }
@@ -1071,7 +1071,7 @@ class ShopCreateGui(
         } else {
             val amount = checkPlayerMoney(playerEntity, registryAccess)
             if (amount <= 0) {
-                playerEntity.sendMessage(tr("commands.shop.create.failed.lack"))
+                playerEntity.sendSystemMessage(tr("commands.shop.create.failed.lack"))
                 offerItemToPlayer(playerEntity, draft.items)
                 removeGui(playerEntity)
                 return
@@ -1079,10 +1079,10 @@ class ShopCreateGui(
             customScope.launch {
                 calculateAndTakeMoney(playerEntity, amount)
                 draft.playerShopCreate()
-                playerEntity.server.execute {
+                playerEntity.level().server.execute {
                     val entity = draft.spawnOrRespawn(world)
                     synchronized(shopEntityList) { shopEntityList[draft.id] = entity }
-                    playerEntity.sendMessage(tr("commands.shop.create.success"))
+                    playerEntity.sendSystemMessage(tr("commands.shop.create.success"))
                     notifyNameCommandHintIfNeeded(draft.shopname)
                     removeGui(playerEntity)
                 }
@@ -1092,12 +1092,12 @@ class ShopCreateGui(
 
     private fun notifyNameCommandHintIfNeeded(name: String) {
         if (name.contains(' ') || name.any { it.code > 127 }) {
-            playerEntity.sendMessage(tr("commands.shop.name.quote_hint"))
+            playerEntity.sendSystemMessage(tr("commands.shop.name.quote_hint"))
         }
     }
 
     // ── guiSet helpers ───────────────────────────────────────────────────────
 
-    private fun addGui(player: ServerPlayerEntity) = VillagerShopMain.guiSet.add(player)
-    fun removeGui(player: ServerPlayerEntity) = VillagerShopMain.guiSet.remove(player)
+    private fun addGui(player: ServerPlayer) = VillagerShopMain.guiSet.add(player)
+    fun removeGui(player: ServerPlayer) = VillagerShopMain.guiSet.remove(player)
 }

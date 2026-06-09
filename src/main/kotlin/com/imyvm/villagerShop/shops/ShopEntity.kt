@@ -10,15 +10,15 @@ import com.imyvm.villagerShop.items.ItemManager
 import com.mojang.brigadier.arguments.StringArgumentType.getString
 import com.mojang.brigadier.context.CommandContext
 import kotlinx.coroutines.launch
-import net.minecraft.command.CommandRegistryAccess
-import net.minecraft.command.argument.BlockPosArgumentType.getBlockPos
-import net.minecraft.command.argument.ItemStackArgument
-import net.minecraft.entity.passive.VillagerEntity
-import net.minecraft.item.ItemStack
-import net.minecraft.server.command.ServerCommandSource
-import net.minecraft.server.network.ServerPlayerEntity
-import net.minecraft.server.world.ServerWorld
-import net.minecraft.util.math.BlockPos
+import net.minecraft.commands.CommandBuildContext
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument.getBlockPos
+import net.minecraft.commands.arguments.item.ItemInput
+import net.minecraft.world.entity.npc.villager.Villager
+import net.minecraft.world.item.ItemStack
+import net.minecraft.commands.CommandSourceStack
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.server.level.ServerLevel
+import net.minecraft.core.BlockPos
 import java.util.*
 import kotlin.math.pow
 
@@ -37,7 +37,7 @@ class ShopEntity(
     var income: Double
 ) {
     constructor(
-        context: CommandContext<ServerCommandSource>,
+        context: CommandContext<CommandSourceStack>,
         type: ShopType
     ) : this(
         id = -1,
@@ -45,17 +45,17 @@ class ShopEntity(
         posX = getBlockPos(context, "pos").x,
         posY = getBlockPos(context, "pos").y,
         posZ = getBlockPos(context, "pos").z,
-        world = context.source.player!!.world.registryKey.value.toString(),
+        world = context.source.player!!.level().dimension().identifier().toString(),
         admin = 1,
         type = type,
-        owner = context.source.player!!.nameForScoreboard,
+        owner = context.source.player!!.scoreboardName,
         ownerUUID = context.source.player!!.uuid,
         items = mutableListOf(),
         income = 0.0
     )
 //    ) {
 //        val sellItemListString = getString(context, "items")
-//        val (compare, itemList, errorMessage) = checkParameterLegality(sellItemListString, context.source.registryManager)
+//        val (compare, itemList, errorMessage) = checkParameterLegality(sellItemListString, context.source.registryAccess())
 //        when (compare) {
 //            0 -> throw SimpleCommandExceptionType(tr("commands.shop.create.no_item")).create()
 //            1 -> throw SimpleCommandExceptionType(tr("commands.shop.create.count_not_equal")).create()
@@ -65,17 +65,17 @@ class ShopEntity(
 //    }
 
     constructor(
-        context: CommandContext<ServerCommandSource>,
+        context: CommandContext<CommandSourceStack>,
     ) : this(
         id = -1,
         shopname = getString(context, "shopName"),
         posX = getBlockPos(context, "pos").x,
         posY = getBlockPos(context, "pos").y,
         posZ = getBlockPos(context, "pos").z,
-        world = context.source.player!!.world.registryKey.value.toString(),
+        world = context.source.player!!.level().dimension().identifier().toString(),
         admin = 0,
         type = ShopType.SELL,
-        owner = context.source.player!!.nameForScoreboard,
+        owner = context.source.player!!.scoreboardName,
         ownerUUID = context.source.player!!.uuid,
         items = mutableListOf(),
         income = 0.0
@@ -90,19 +90,19 @@ class ShopEntity(
         this.id = shopDBService.create(this)
     }
 
-    fun addTradeOffer(tradeItem: ItemManager, player: ServerPlayerEntity) {
+    fun addTradeOffer(tradeItem: ItemManager, player: ServerPlayer) {
         this.items.add(tradeItem)
-        player.sendMessage(tr("commands.shop.item.add.success"))
+        player.sendSystemMessage(tr("commands.shop.item.add.success"))
         updateAsync()
     }
 
-    fun info(player: ServerPlayerEntity) {
+    fun info(player: ServerPlayer) {
         sendMessageByType(this, player)
         val itemInfo = this.items
         for (item in itemInfo) {
-            player.sendMessage(
+            player.sendSystemMessage(
                 tr("commands.shopinfo.items",
-                    item.item.itemStack.toHoverableText(),
+                    item.item.itemStack.hoverName,
                     item.sellPerTime,
                     item.price,
                     item.stock
@@ -126,7 +126,7 @@ class ShopEntity(
         updateAsync()
     }
 
-    fun spawnOrRespawn(world: ServerWorld): VillagerEntity {
+    fun spawnOrRespawn(world: ServerLevel): Villager {
         return spawnInvulnerableVillager(
             BlockPos(this.posX, this.posY, this.posZ),
             world,
@@ -136,10 +136,10 @@ class ShopEntity(
         )
     }
 
-    fun getTradedItem(tradeItem: ItemStackArgument): ItemManager? {
+    fun getTradedItem(tradeItem: ItemInput): ItemManager? {
         return this.items.find {
             it.item.item.value() == tradeItem.item &&
-                    it.item.itemStack.components == tradeItem.createStack(1, false).components
+                    it.item.itemStack.components == tradeItem.createItemStack(1).components
         }
     }
 
@@ -150,10 +150,10 @@ class ShopEntity(
         }
     }
 
-    fun deleteTradedItem(itemToRemove: ItemStackArgument) {
+    fun deleteTradedItem(itemToRemove: ItemInput) {
         this.items.removeIf {
             it.item.item.value() == itemToRemove.item &&
-                    it.item.itemStack.components == itemToRemove.createStack(1, false).components
+                    it.item.itemStack.components == itemToRemove.createItemStack(1).components
         }
         updateAsync()
     }
@@ -180,16 +180,16 @@ class ShopEntity(
         fun checkCanCreateShop(
             shopName: String,
             playerName: String,
-            registryAccess: CommandRegistryAccess
+            registryAccess: CommandBuildContext
         ): Boolean {
             return shopDBService.readByShopName(shopName, playerName, registryAccess).singleOrNull() == null
         }
 
         fun checkPlayerMoney(
-            player: ServerPlayerEntity,
-            registryAccess: CommandRegistryAccess
+            player: ServerPlayer,
+            registryAccess: CommandBuildContext
         ): Long {
-            val shopCount = shopDBService.readByOwner(player.nameForScoreboard, registryAccess).size
+            val shopCount = shopDBService.readByOwner(player.scoreboardName, registryAccess).size
             val amount = if (shopCount < 3) {
                 40L
             } else {
@@ -201,28 +201,28 @@ class ShopEntity(
         }
 
         fun calculateAndTakeMoney(
-            player: ServerPlayerEntity,
+            player: ServerPlayer,
             amount: Long
         ) {
             val playerEconomyData = EconomyData(player)
 
             playerEconomyData.takeMoney(amount)
-            player.sendMessage(tr("commands.balance.consume", amount / 100))
+            player.sendSystemMessage(tr("commands.balance.consume", amount / 100))
         }
 
         fun checkCanAddTradeOffer(
             shop: ShopEntity,
             tradeItem: ItemManager,
-            player: ServerPlayerEntity
+            player: ServerPlayer
         ): Boolean {
             shop.items.let {
                 if (it.isNotEmpty()) {
                     if (shop.items.contains(tradeItem)) {
-                        player.sendMessage(tr("commands.playershop.add.repeat"))
+                        player.sendSystemMessage(tr("commands.playershop.add.repeat"))
                         return false
                     }
                     if (shop.items.size == 7) {
-                        player.sendMessage(tr("commands.playershop.item.limit"))
+                        player.sendSystemMessage(tr("commands.playershop.item.limit"))
                         return false
                     }
                 }
@@ -230,18 +230,18 @@ class ShopEntity(
 
             for (i in itemList) {
                 if ((i.item == tradeItem.item) && i.price.toLong() <= tradeItem.price / tradeItem.sellPerTime * 0.8) {
-                    player.sendMessage(tr("commands.shop.create.item.price.toolow", tradeItem.item.itemStack.toHoverableText()))
+                    player.sendSystemMessage(tr("commands.shop.create.item.price.toolow", tradeItem.item.itemStack.hoverName))
                     return false
                 }
             }
             return true
         }
 
-        fun sendMessageByType(shopInfo: ShopEntity, player: ServerPlayerEntity) {
-            player.sendMessage(tr("commands.shopinfo.id", shopInfo.id))
-            player.sendMessage(tr("commands.shopinfo.shopname", shopInfo.shopname))
-            player.sendMessage(tr("commands.shopinfo.owner", shopInfo.owner))
-            player.sendMessage(tr("commands.shopinfo.pos", "${shopInfo.posX}, ${shopInfo.posY}, ${shopInfo.posZ}"))
+        fun sendMessageByType(shopInfo: ShopEntity, player: ServerPlayer) {
+            player.sendSystemMessage(tr("commands.shopinfo.id", shopInfo.id))
+            player.sendSystemMessage(tr("commands.shopinfo.shopname", shopInfo.shopname))
+            player.sendSystemMessage(tr("commands.shopinfo.owner", shopInfo.owner))
+            player.sendSystemMessage(tr("commands.shopinfo.pos", "${shopInfo.posX}, ${shopInfo.posY}, ${shopInfo.posZ}"))
         }
 
         fun getDefaultShop(): ShopEntity {

@@ -21,17 +21,17 @@ import eu.pb4.sgui.api.elements.GuiElementBuilder
 import eu.pb4.sgui.api.gui.AnvilInputGui
 import eu.pb4.sgui.api.gui.SimpleGui
 import kotlinx.coroutines.launch
-import net.minecraft.command.CommandRegistryAccess
-import net.minecraft.item.ItemStack
-import net.minecraft.item.Items
-import net.minecraft.predicate.ComponentPredicate
-import net.minecraft.registry.Registries
-import net.minecraft.registry.RegistryWrapper
-import net.minecraft.screen.ScreenHandlerType
-import net.minecraft.server.network.ServerPlayerEntity
-import net.minecraft.text.Text
-import net.minecraft.util.math.BlockPos
-import net.minecraft.village.TradedItem
+import net.minecraft.commands.CommandBuildContext
+import net.minecraft.core.BlockPos
+import net.minecraft.core.HolderLookup
+import net.minecraft.core.component.DataComponentExactPredicate
+import net.minecraft.core.registries.BuiltInRegistries
+import net.minecraft.network.chat.Component
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.world.inventory.MenuType
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.world.item.trading.ItemCost
 
 // ─── Container source (local copy, mirrors ShopCreateGui) ───────────────────
 
@@ -50,13 +50,13 @@ private sealed class MgContainerSource {
  *  - [openFor]    → directly open a specific shop's manage page
  */
 class ShopManageGui(
-    private val playerEntity: ServerPlayerEntity,
-    private val registryAccess: CommandRegistryAccess
+    private val playerEntity: ServerPlayer,
+    private val registryAccess: CommandBuildContext
 ) {
-            private fun buildAnvilInputItem(icon: ItemStack, hint: Text): GuiElementBuilder =
+            private fun buildAnvilInputItem(icon: ItemStack, hint: Component): GuiElementBuilder =
                 GuiElementBuilder.from(icon.copy())
                     // Keep the anvil input blank so players can type directly without deleting prompt text.
-                    .setName(Text.literal(" "))
+                    .setName(Component.literal(" "))
                     .addLoreLine(hint)
 
     private fun parseQuickValue(clickType: ClickType, left: String, right: String): String? = when (clickType) {
@@ -65,7 +65,7 @@ class ShopManageGui(
         else -> null
     }
 
-    private val registries: RegistryWrapper.WrapperLookup = registryAccess
+    private val registries: HolderLookup.Provider = registryAccess
 
     // ── Public entry points ──────────────────────────────────────────────────
 
@@ -83,28 +83,28 @@ class ShopManageGui(
 
     // ── GUI factory helpers ──────────────────────────────────────────────────
 
-    private fun simpleGui(type: ScreenHandlerType<*>): SimpleGui =
+    private fun simpleGui(type: MenuType<*>): SimpleGui =
         object : SimpleGui(type, playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
         }
 
     private fun anvilGui(): AnvilInputGui =
         object : AnvilInputGui(playerEntity, false) {
-            override fun onClose() { removeGui(playerEntity); super.onClose() }
+            override fun onPlayerClose(auto: Boolean) { removeGui(playerEntity); super.onPlayerClose(auto) }
             override fun onInput(input: String) {}
         }
 
     // ── Page 1: shop list ──────────────────���─────────────────────────────────
 
     private fun openShopListPage(page: Int = 0) {
-        val shops = shopDBService.readByOwner(playerEntity.nameForScoreboard, registryAccess)
+        val shops = shopDBService.readByOwner(playerEntity.scoreboardName, registryAccess)
 
         val perPage = 21
         val totalPages = maxOf(1, (shops.size + perPage - 1) / perPage)
         val current = page.coerceIn(0, totalPages - 1)
         val pageShops = shops.drop(current * perPage).take(perPage)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.manage.list.title")
 
         for (i in 0 until 36) gui.setSlot(i, glassPane(8))
@@ -119,7 +119,7 @@ class ShopManageGui(
                 ShopType.REFRESHABLE_BUY  -> Items.GOLD_BLOCK
             }
             gui.setSlot(idx, GuiElementBuilder(icon)
-                .setName(Text.literal(shop.shopname))
+                .setName(Component.literal(shop.shopname))
                 .addLoreLine(tr("gui.manage.list.type", shop.type.name))
                 .addLoreLine(tr("gui.manage.list.pos", pos.x, pos.y, pos.z))
                 .addLoreLine(tr("gui.manage.list.items", shop.items.size))
@@ -163,7 +163,7 @@ class ShopManageGui(
     // ── Page 2: manage a single shop ─────────────────────────────────────────
 
     private fun openShopMainPage(shop: ShopEntity) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X3)
+        val gui = simpleGui(MenuType.GENERIC_9x3)
         gui.title = tr("gui.manage.main.title", shop.shopname)
         border(gui, 3)
 
@@ -171,7 +171,7 @@ class ShopManageGui(
 
         // Centre: shop info display
         gui.setSlot(13, GuiElementBuilder(Items.OAK_SIGN)
-            .setName(Text.literal(shop.shopname))
+            .setName(Component.literal(shop.shopname))
             .addLoreLine(tr("gui.manage.main.id", shop.id))
             .addLoreLine(tr("gui.manage.main.type", shop.type.name))
             .addLoreLine(tr("gui.manage.main.pos", pos.x, pos.y, pos.z))
@@ -237,11 +237,11 @@ class ShopManageGui(
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val newName = gui.input.trim()
-                if (newName.isEmpty()) { playerEntity.sendMessage(tr("gui.create.name.empty")); return@setCallback }
+                if (newName.isEmpty()) { playerEntity.sendSystemMessage(tr("gui.create.name.empty")); return@setCallback }
                 shop.shopname = newName
                 shop.updateAsync()
-                shopEntityList.getOrDefault(shop.id, null)?.customName = Text.of(newName)
-                playerEntity.sendMessage(tr("gui.manage.rename.success", newName))
+                shopEntityList.getOrDefault(shop.id, null)?.customName = Component.literal(newName)
+                playerEntity.sendSystemMessage(tr("gui.manage.rename.success", newName))
                 notifyNameCommandHintIfNeeded(newName)
                 gui.close()
                 openShopMainPage(shop)
@@ -261,7 +261,7 @@ class ShopManageGui(
     ) {
         val pos = BlockPos(basePos.x + offsetX, basePos.y + offsetY, basePos.z + offsetZ)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.manage.move.title")
         for (i in 0 until 45) gui.setSlot(i, glassPane(8))
 
@@ -274,7 +274,7 @@ class ShopManageGui(
 
         fun offsetLabel(axis: String, value: Int, offset: Int) =
             GuiElementBuilder(Items.WHITE_CONCRETE)
-                .setName(Text.literal("$axis: $value  (${if (offset >= 0) "+$offset" else "$offset"})"))
+                .setName(Component.literal("$axis: $value  (${if (offset >= 0) "+$offset" else "$offset"})"))
 
         // Current pos display
         gui.setSlot(22, GuiElementBuilder(Items.COMPASS)
@@ -330,7 +330,7 @@ class ShopManageGui(
                 shopEntityList.getOrDefault(shop.id, null)?.setPos(
                     pos.x + 0.5, pos.y + 1.0, pos.z + 0.5
                 )
-                playerEntity.sendMessage(tr("gui.manage.move.success", pos.x, pos.y, pos.z))
+                playerEntity.sendSystemMessage(tr("gui.manage.move.success", pos.x, pos.y, pos.z))
                 gui.close()
                 openShopMainPage(shop)
             }
@@ -342,7 +342,7 @@ class ShopManageGui(
     // ── Page 5: item management ──────────────────────────────────────────────
 
     private fun openItemManagePage(shop: ShopEntity) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X4)
+        val gui = simpleGui(MenuType.GENERIC_9x4)
         gui.title = tr("gui.manage.items.title", shop.shopname)
 
         for (i in 0..26) gui.setSlot(i, glassPane(8))
@@ -352,7 +352,7 @@ class ShopManageGui(
             if (idx < 7) {
                 val stock = item.stock["default"] ?: 0
                 gui.setSlot(idx * 2 + 1, GuiElementBuilder.from(item.item.itemStack.copy())
-                    .setName(item.item.itemStack.toHoverableText())
+                    .setName(item.item.itemStack.hoverName)
                     .addLoreLine(tr("gui.create.item.price", item.price))
                     .addLoreLine(tr("gui.create.item.qty", item.sellPerTime))
                     .addLoreLine(tr("gui.create.item.stock", stock))
@@ -397,7 +397,7 @@ class ShopManageGui(
     // ── Page 5x: restock flow ─────────────────────────────────────────────────
 
     private fun openRestockItemSelectPage(shop: ShopEntity) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X3)
+        val gui = simpleGui(MenuType.GENERIC_9x3)
         gui.title = tr("gui.manage.stock.item.title", shop.shopname)
         border(gui, 3)
 
@@ -415,7 +415,7 @@ class ShopManageGui(
             if (idx > 6) return@forEachIndexed
             val stock = item.stock["default"] ?: 0
             gui.setSlot(idx * 2 + 1, GuiElementBuilder.from(item.item.itemStack.copy())
-                .setName(item.item.itemStack.toHoverableText())
+                .setName(item.item.itemStack.hoverName)
                 .addLoreLine(tr("gui.create.item.qty", item.sellPerTime))
                 .addLoreLine(tr("gui.create.item.price", item.price))
                 .addLoreLine(tr("gui.create.item.stock", stock))
@@ -432,13 +432,13 @@ class ShopManageGui(
     }
 
     private fun openRestockSourcePage(shop: ShopEntity, item: ItemManager) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X3)
+        val gui = simpleGui(MenuType.GENERIC_9x3)
         gui.title = tr("gui.manage.stock.source.title")
         border(gui, 3)
 
         val preview = item.item.itemStack.copyWithCount(1)
         gui.setSlot(13, GuiElementBuilder.from(preview)
-            .setName(preview.toHoverableText())
+            .setName(preview.hoverName)
             .addLoreLine(tr("gui.manage.stock.source.choose"))
         )
 
@@ -478,7 +478,7 @@ class ShopManageGui(
     private fun openRestockContainerPickerPage(shop: ShopEntity, item: ItemManager, page: Int = 0) {
         val invContainers = findContainersInInventory(playerEntity)
             .map { (slot, stack) -> MgContainerSource.InventorySlot(slot, stack) }
-        val worldBoxes = findShulkerBoxesInWorld(playerEntity.serverWorld, playerEntity.blockPos)
+        val worldBoxes = findShulkerBoxesInWorld(playerEntity.level(), playerEntity.blockPosition())
             .map { (p, _) -> MgContainerSource.WorldBlock(p) }
         val allSources = (invContainers + worldBoxes)
             .filter { countAvailableFromSource(item.item.itemStack, it) > 0 }
@@ -488,7 +488,7 @@ class ShopManageGui(
         val current = page.coerceIn(0, totalPages - 1)
         val pageSources = allSources.drop(current * perPage).take(perPage)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.manage.stock.container.title")
 
         for (i in 0 until 36) gui.setSlot(i, glassPane(8))
@@ -498,7 +498,7 @@ class ShopManageGui(
             when (source) {
                 is MgContainerSource.InventorySlot -> {
                     val stack = source.stack
-                    val name = stack.name.takeIf { it.string.isNotBlank() } ?: Text.translatable(stack.translationKey)
+                    val name = stack.hoverName.takeIf { it.string.isNotBlank() } ?: Component.translatable(stack.item.descriptionId)
                     gui.setSlot(idx, GuiElementBuilder.from(stack.copyWithCount(1))
                         .setName(name)
                         .addLoreLine(tr("gui.create.container.inv_slot", source.invSlot))
@@ -508,7 +508,7 @@ class ShopManageGui(
                     )
                 }
                 is MgContainerSource.WorldBlock -> {
-                    val blockState = playerEntity.serverWorld.getBlockState(source.pos)
+                    val blockState = playerEntity.level().getBlockState(source.pos)
                     val icon = blockState.block.asItem().takeIf { it != Items.AIR } ?: Items.SHULKER_BOX
                     gui.setSlot(idx, GuiElementBuilder(icon)
                         .setName(blockState.block.name)
@@ -566,22 +566,22 @@ class ShopManageGui(
             .setCallback { _, clickType, _, _ ->
                 val quick = parseQuickValue(clickType, "1", "64")?.toIntOrNull() ?: return@setCallback
                 if (quick > available) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", available))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", available))
                     gui.close()
                     openRestockQtyInputPage(shop, item, source)
                     return@setCallback
                 }
                 val removed = removeFromSelectedSource(source, item.item.itemStack, quick)
                 if (removed <= 0) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", available))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", available))
                     gui.close()
                     openRestockQtyInputPage(shop, item, source)
                     return@setCallback
                 }
                 item.stock["default"] = (item.stock["default"] ?: 0) + removed
                 shop.updateAsync()
-                if (source != null) playerEntity.sendMessage(tr("commands.stock.add.ok", removed))
-                playerEntity.sendMessage(tr("gui.manage.stock.success", removed))
+                if (source != null) playerEntity.sendSystemMessage(tr("commands.stock.add.ok", removed))
+                playerEntity.sendSystemMessage(tr("gui.manage.stock.success", removed))
                 gui.close()
                 openItemManagePage(shop)
             }
@@ -592,28 +592,28 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val qty = gui.input.trim().toIntOrNull()
                 if (qty == null || qty < 1 || qty > 999999) {
-                    playerEntity.sendMessage(tr("gui.create.qty.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.invalid"))
                     gui.close()
                     openRestockQtyInputPage(shop, item, source)
                     return@setCallback
                 }
                 if (qty > available) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", available))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", available))
                     gui.close()
                     openRestockQtyInputPage(shop, item, source)
                     return@setCallback
                 }
                 val removed = removeFromSelectedSource(source, item.item.itemStack, qty)
                 if (removed <= 0) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", available))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", available))
                     gui.close()
                     openRestockQtyInputPage(shop, item, source)
                     return@setCallback
                 }
                 item.stock["default"] = (item.stock["default"] ?: 0) + removed
                 shop.updateAsync()
-                if (source != null) playerEntity.sendMessage(tr("commands.stock.add.ok", removed))
-                playerEntity.sendMessage(tr("gui.manage.stock.success", removed))
+                if (source != null) playerEntity.sendSystemMessage(tr("commands.stock.add.ok", removed))
+                playerEntity.sendSystemMessage(tr("gui.manage.stock.success", removed))
                 gui.close()
                 openItemManagePage(shop)
             }
@@ -624,13 +624,13 @@ class ShopManageGui(
     // ── Page 5a: delete item with confirmation ───────────────────────────────
 
     private fun openDeleteItemConfirmPage(shop: ShopEntity, item: ItemManager) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X3)
+        val gui = simpleGui(MenuType.GENERIC_9x3)
         gui.title = tr("gui.manage.items.delete.title")
         border(gui, 3)
         val stock = item.stock["default"] ?: 0
 
         gui.setSlot(13, GuiElementBuilder.from(item.item.itemStack.copy())
-            .setName(item.item.itemStack.toHoverableText())
+            .setName(item.item.itemStack.hoverName)
             .addLoreLine(tr("gui.create.item.price", item.price))
             .addLoreLine(tr("gui.create.item.qty", item.sellPerTime))
             .addLoreLine(tr("gui.create.item.stock", stock))
@@ -640,11 +640,11 @@ class ShopManageGui(
         gui.setSlot(11, GuiElementBuilder(Items.LIME_DYE)
             .setName(tr("gui.manage.items.delete.confirm"))
             .setCallback { _, _, _, _ ->
-                shop.deleteTradedItem(item.item.itemStack as ItemStack)
+                shop.deleteTradedItem(item.item.itemStack)
                 if (stock > 0)
-                    playerEntity.inventory.offerOrDrop(ItemStack(item.item.item, stock))
-                playerEntity.sendMessage(tr("gui.manage.items.delete.success",
-                    item.item.itemStack.toHoverableText()))
+                    playerEntity.inventory.placeItemBackInInventory(ItemStack(item.item.item, stock))
+                playerEntity.sendSystemMessage(tr("gui.manage.items.delete.success",
+                    item.item.itemStack.hoverName))
                 gui.close()
                 openItemManagePage(shop)
             }
@@ -680,7 +680,7 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val newQty = gui.input.trim().toIntOrNull()
                 if (newQty == null || newQty < 1 || newQty > 99) {
-                    playerEntity.sendMessage(tr("gui.create.qty.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.invalid"))
                     gui.close()
                     openEditItemPage(shop, item)
                     return@setCallback
@@ -706,8 +706,8 @@ class ShopManageGui(
                 item.sellPerTime = newQty
                 item.price = quick
                 shop.updateAsync()
-                playerEntity.sendMessage(tr("gui.manage.items.edit.success",
-                    item.item.itemStack.toHoverableText(), newQty, quick))
+                playerEntity.sendSystemMessage(tr("gui.manage.items.edit.success",
+                    item.item.itemStack.hoverName, newQty, quick))
                 gui.close()
                 openItemManagePage(shop)
             }
@@ -718,7 +718,7 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val newPrice = gui.input.trim().toDoubleOrNull()
                 if (newPrice == null || newPrice < 0.1) {
-                    playerEntity.sendMessage(tr("gui.create.price.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.price.invalid"))
                     gui.close()
                     openEditItemPricePage(shop, item, newQty)
                     return@setCallback
@@ -726,8 +726,8 @@ class ShopManageGui(
                 item.sellPerTime = newQty
                 item.price = newPrice
                 shop.updateAsync()
-                playerEntity.sendMessage(tr("gui.manage.items.edit.success",
-                    item.item.itemStack.toHoverableText(), newQty, newPrice))
+                playerEntity.sendSystemMessage(tr("gui.manage.items.edit.success",
+                    item.item.itemStack.hoverName, newQty, newPrice))
                 gui.close()
                 openItemManagePage(shop)
             }
@@ -740,16 +740,16 @@ class ShopManageGui(
     private fun openPickItemPage(shop: ShopEntity, page: Int = 0) {
         val inv = playerEntity.inventory
         val merged = linkedMapOf<String, Pair<ItemStack, Int>>()
-        for (slot in 0 until inv.size()) {
-            val stack = inv.getStack(slot)
+        for (slot in 0 until inv.containerSize) {
+            val stack = inv.getItem(slot)
             if (stack.isEmpty) continue
-            val key = Registries.ITEM.getId(stack.item).toString() + "|" + stack.components.toString()
+            val key = BuiltInRegistries.ITEM.getId(stack.item).toString() + "|" + stack.components.toString()
             val ex = merged[key]
             merged[key] = if (ex == null) Pair(stack.copy(), stack.count)
                           else Pair(ex.first, ex.second + stack.count)
         }
         val draftKeys = shop.items.map { i ->
-            Registries.ITEM.getId(i.item.item.value()).toString() + "|" + i.item.itemStack.components.toString()
+            BuiltInRegistries.ITEM.getId(i.item.item.value()).toString() + "|" + i.item.itemStack.components.toString()
         }.toSet()
         val available = merged.entries.filter { it.key !in draftKeys }.map { it.value }
 
@@ -758,7 +758,7 @@ class ShopManageGui(
         val current = page.coerceIn(0, totalPages - 1)
         val pageItems = available.drop(current * perPage).take(perPage)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.create.add_item.title")
 
         for (i in 0 until 36) gui.setSlot(i, glassPane(8))
@@ -766,7 +766,7 @@ class ShopManageGui(
 
         pageItems.forEachIndexed { idx, (stack, totalCount) ->
             gui.setSlot(idx, GuiElementBuilder.from(stack.copyWithCount(minOf(totalCount, 64)))
-                .setName(stack.toHoverableText())
+                .setName(stack.hoverName)
                 .addLoreLine(tr("gui.create.add_item.total", totalCount))
                 .addLoreLine(tr("gui.create.add_item.click_select"))
                 .setCallback { _, _, _, _ ->
@@ -813,7 +813,7 @@ class ShopManageGui(
     private fun openPickContainerPage(shop: ShopEntity, page: Int = 0) {
         val invContainers = findContainersInInventory(playerEntity)
             .map { (slot, stack) -> MgContainerSource.InventorySlot(slot, stack) }
-        val worldBoxes = findShulkerBoxesInWorld(playerEntity.serverWorld, playerEntity.blockPos)
+        val worldBoxes = findShulkerBoxesInWorld(playerEntity.level(), playerEntity.blockPosition())
             .map { (p, _) -> MgContainerSource.WorldBlock(p) }
         val allSources: List<MgContainerSource> = invContainers + worldBoxes
 
@@ -822,7 +822,7 @@ class ShopManageGui(
         val current = page.coerceIn(0, totalPages - 1)
         val pageSources = allSources.drop(current * perPage).take(perPage)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.create.container.title")
 
         for (i in 0 until 36) gui.setSlot(i, glassPane(8))
@@ -832,8 +832,8 @@ class ShopManageGui(
             when (source) {
                 is MgContainerSource.InventorySlot -> {
                     val stack = source.stack
-                    val name = stack.name.takeIf { it.string.isNotBlank() }
-                        ?: Text.translatable(stack.translationKey)
+                    val name = stack.hoverName.takeIf { it.string.isNotBlank() }
+                        ?: Component.translatable(stack.item.descriptionId)
                     gui.setSlot(idx, GuiElementBuilder.from(stack.copyWithCount(1))
                         .setName(name)
                         .addLoreLine(tr("gui.create.container.inv_slot", source.invSlot))
@@ -842,7 +842,7 @@ class ShopManageGui(
                     )
                 }
                 is MgContainerSource.WorldBlock -> {
-                    val blockState = playerEntity.serverWorld.getBlockState(source.pos)
+                    val blockState = playerEntity.level().getBlockState(source.pos)
                     val icon = blockState.block.asItem().takeIf { it != Items.AIR } ?: Items.SHULKER_BOX
                     gui.setSlot(idx, GuiElementBuilder(icon)
                         .setName(blockState.block.name)
@@ -895,21 +895,21 @@ class ShopManageGui(
     ) {
         val merged: LinkedHashMap<String, Pair<ItemStack, Int>> = when (source) {
             is MgContainerSource.InventorySlot -> {
-                val live = playerEntity.inventory.getStack(source.invSlot)
+                val live = playerEntity.inventory.getItem(source.invSlot)
                 if (live.isEmpty) linkedMapOf() else getItemsInsideContainerStack(live)
             }
             is MgContainerSource.WorldBlock ->
-                findShulkerBoxesInWorld(playerEntity.serverWorld, source.pos, 0).firstOrNull()?.second ?: linkedMapOf()
+                findShulkerBoxesInWorld(playerEntity.level(), source.pos, 0).firstOrNull()?.second ?: linkedMapOf()
             is MgContainerSource.EnderChest -> ItemManager.getItemsInEnderChest(playerEntity)
         }
 
         val draftKeys = shop.items.map { i ->
-            Registries.ITEM.getId(i.item.item.value()).toString() + "|" + i.item.itemStack.components.toString()
+            BuiltInRegistries.ITEM.getId(i.item.item.value()).toString() + "|" + i.item.itemStack.components.toString()
         }.toSet()
         val available = merged.entries.filter { it.key !in draftKeys }.map { it.value }
 
         val containerLabel: String = when (source) {
-            is MgContainerSource.InventorySlot -> source.stack.name.string.ifBlank { source.stack.translationKey }
+            is MgContainerSource.InventorySlot -> source.stack.hoverName.string.ifBlank { source.stack.item.descriptionId }
             is MgContainerSource.WorldBlock    -> "(${source.pos.x}, ${source.pos.y}, ${source.pos.z})"
             is MgContainerSource.EnderChest    -> tr("gui.create.container.ender_chest").string
         }
@@ -919,7 +919,7 @@ class ShopManageGui(
         val current = page.coerceIn(0, totalPages - 1)
         val pageItems = available.drop(current * perPage).take(perPage)
 
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X5)
+        val gui = simpleGui(MenuType.GENERIC_9x5)
         gui.title = tr("gui.create.container.contents.title", containerLabel)
 
         for (i in 0 until 36) gui.setSlot(i, glassPane(8))
@@ -927,7 +927,7 @@ class ShopManageGui(
 
         pageItems.forEachIndexed { idx, (stack, totalCount) ->
             gui.setSlot(idx, GuiElementBuilder.from(stack.copyWithCount(minOf(totalCount, 64)))
-                .setName(stack.toHoverableText())
+                .setName(stack.hoverName)
                 .addLoreLine(tr("gui.create.add_item.total", totalCount))
                 .addLoreLine(tr("gui.create.add_item.click_select"))
                 .setCallback { _, _, _, _ ->
@@ -996,13 +996,13 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val qty = gui.input.trim().toIntOrNull()
                 if (qty == null || qty < 1 || qty > 99) {
-                    playerEntity.sendMessage(tr("gui.create.qty.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.invalid"))
                     gui.close()
                     openAddQtyPage(shop, stack, totalCount, source)
                     return@setCallback
                 }
                 if (!isAdmin && qty > totalCount) {
-                    playerEntity.sendMessage(tr("gui.create.qty.not_enough", totalCount))
+                    playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", totalCount))
                     gui.close()
                     openAddQtyPage(shop, stack, totalCount, source)
                     return@setCallback
@@ -1056,7 +1056,7 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val price = gui.input.trim().toDoubleOrNull()
                 if (price == null || price < 0.1) {
-                    playerEntity.sendMessage(tr("gui.create.price.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.price.invalid"))
                     gui.close()
                     openAddPricePage(shop, stack, qty, totalCount, source)
                     return@setCallback
@@ -1108,7 +1108,7 @@ class ShopManageGui(
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
                 val stock = gui.input.trim().toIntOrNull()
                 if (stock == null || stock < 0) {
-                    playerEntity.sendMessage(tr("gui.create.stock.invalid"))
+                    playerEntity.sendSystemMessage(tr("gui.create.stock.invalid"))
                     gui.close()
                     openAddStockPage(shop, stack, qty, price)
                     return@setCallback
@@ -1127,12 +1127,12 @@ class ShopManageGui(
     // ── Page 8: delete shop confirmation ─────────────────────────────────────
 
     private fun openDeleteConfirmPage(shop: ShopEntity) {
-        val gui = simpleGui(ScreenHandlerType.GENERIC_9X3)
+        val gui = simpleGui(MenuType.GENERIC_9x3)
         gui.title = tr("gui.manage.delete.title", shop.shopname)
         border(gui, 3)
 
         gui.setSlot(13, GuiElementBuilder(Items.TNT)
-            .setName(Text.literal(shop.shopname))
+            .setName(Component.literal(shop.shopname))
             .addLoreLine(tr("gui.manage.delete.warn"))
             .addLoreLine(tr("gui.manage.delete.warn2"))
         )
@@ -1140,12 +1140,12 @@ class ShopManageGui(
             .setName(tr("gui.manage.delete.confirm"))
             .setCallback { _, _, _, _ ->
                 customScope.launch {
-                    shopEntityList.getOrDefault(shop.id, null)?.kill()
+                    shopEntityList.getOrDefault(shop.id, null)?.discard()
                     synchronized(shopEntityList) { shopEntityList.remove(shop.id) }
                     shop.deleteAsync()
-                    playerEntity.server.execute {
+                    playerEntity.level().server.execute {
                         offerItemToPlayer(playerEntity, shop.items)
-                        playerEntity.sendMessage(tr("gui.manage.delete.success", shop.shopname))
+                        playerEntity.sendSystemMessage(tr("gui.manage.delete.success", shop.shopname))
                         gui.close()
                         openShopListPage()
                     }
@@ -1161,7 +1161,7 @@ class ShopManageGui(
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private fun sourceLore(source: MgContainerSource): Text = when (source) {
+    private fun sourceLore(source: MgContainerSource): Component = when (source) {
         is MgContainerSource.InventorySlot -> tr("gui.create.container.source.inv")
         is MgContainerSource.WorldBlock    -> tr("gui.create.container.source.world",
             source.pos.x, source.pos.y, source.pos.z)
@@ -1169,13 +1169,13 @@ class ShopManageGui(
     }
 
     private fun stackKey(stack: ItemStack): String =
-        Registries.ITEM.getId(stack.item).toString() + "|" + stack.components.toString()
+        BuiltInRegistries.ITEM.getId(stack.item).toString() + "|" + stack.components.toString()
 
     private fun countItemInPlayerInventory(target: ItemStack): Int {
         val inv = playerEntity.inventory
         var total = 0
-        for (slot in 0 until inv.size()) {
-            val stack = inv.getStack(slot)
+        for (slot in 0 until inv.containerSize) {
+            val stack = inv.getItem(slot)
             if (stack.isEmpty) continue
             if (stack.item == target.item && stack.components == target.components) total += stack.count
         }
@@ -1185,12 +1185,12 @@ class ShopManageGui(
     private fun countAvailableFromSource(target: ItemStack, source: MgContainerSource?): Int = when (source) {
         null -> countItemInPlayerInventory(target)
         is MgContainerSource.InventorySlot -> {
-            val live = playerEntity.inventory.getStack(source.invSlot)
+            val live = playerEntity.inventory.getItem(source.invSlot)
             if (live.isEmpty) 0
             else getItemsInsideContainerStack(live)[stackKey(target)]?.second ?: 0
         }
         is MgContainerSource.WorldBlock ->
-            findShulkerBoxesInWorld(playerEntity.serverWorld, source.pos, 0)
+            findShulkerBoxesInWorld(playerEntity.level(), source.pos, 0)
                 .firstOrNull()?.second?.get(stackKey(target))?.second ?: 0
         is MgContainerSource.EnderChest -> ItemManager.getItemsInEnderChest(playerEntity)[stackKey(target)]?.second ?: 0
     }
@@ -1200,7 +1200,7 @@ class ShopManageGui(
         return when (source) {
             null -> removeItemFromInventory(playerEntity, single, qty)
             is MgContainerSource.InventorySlot -> removeItemFromShulkerBoxesInInventory(playerEntity, single, qty)
-            is MgContainerSource.WorldBlock -> removeItemFromShulkerBoxBlockEntity(playerEntity.serverWorld, source.pos, single, qty)
+            is MgContainerSource.WorldBlock -> removeItemFromShulkerBoxBlockEntity(playerEntity.level(), source.pos, single, qty)
             is MgContainerSource.EnderChest -> ItemManager.removeItemFromEnderChest(playerEntity, single, qty)
         }
     }
@@ -1210,7 +1210,7 @@ class ShopManageGui(
         if (source == null) return removeItemFromInventory(playerEntity, single, qty)
         val fromContainer = when (source) {
             is MgContainerSource.InventorySlot -> removeItemFromShulkerBoxesInInventory(playerEntity, single, qty)
-            is MgContainerSource.WorldBlock    -> removeItemFromShulkerBoxBlockEntity(playerEntity.serverWorld, source.pos, single, qty)
+            is MgContainerSource.WorldBlock    -> removeItemFromShulkerBoxBlockEntity(playerEntity.level(), source.pos, single, qty)
             is MgContainerSource.EnderChest    -> ItemManager.removeItemFromEnderChest(playerEntity, single, qty)
         }
         return fromContainer + if (fromContainer < qty)
@@ -1219,27 +1219,27 @@ class ShopManageGui(
 
     private fun buildItemManager(stack: ItemStack, qty: Int, price: Double, stock: Int): ItemManager? {
         return try {
-            val entry = Registries.ITEM.getEntry(Registries.ITEM.getKey(stack.item).get()).get()
-            val tradedItem = TradedItem(
+            val entry = BuiltInRegistries.ITEM.wrapAsHolder(stack.item)
+            val tradedItem = ItemCost(
                 entry, qty,
-                ComponentPredicate.of(stack.copyWithCount(qty).components),
+                DataComponentExactPredicate.allOf(stack.copyWithCount(qty).components),
                 stack.copyWithCount(qty)
             )
             ItemManager(tradedItem, qty, price, mutableMapOf("default" to stock), registries)
         } catch (_: Exception) {
-            playerEntity.sendMessage(tr("gui.create.item.error"))
+            playerEntity.sendSystemMessage(tr("gui.create.item.error"))
             null
         }
     }
 
     private fun notifyNameCommandHintIfNeeded(name: String) {
         if (name.contains(' ') || name.any { it.code > 127 }) {
-            playerEntity.sendMessage(tr("commands.shop.name.quote_hint"))
+            playerEntity.sendSystemMessage(tr("commands.shop.name.quote_hint"))
         }
     }
 
-    private fun addGui(player: ServerPlayerEntity) = VillagerShopMain.guiSet.add(player)
-    private fun removeGui(player: ServerPlayerEntity) = VillagerShopMain.guiSet.remove(player)
+    private fun addGui(player: ServerPlayer) = VillagerShopMain.guiSet.add(player)
+    private fun removeGui(player: ServerPlayer) = VillagerShopMain.guiSet.remove(player)
 }
 
 

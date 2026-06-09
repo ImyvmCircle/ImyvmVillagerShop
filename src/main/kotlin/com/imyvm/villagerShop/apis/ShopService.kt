@@ -10,9 +10,9 @@ import com.imyvm.villagerShop.shops.ShopEntity.Companion.sendMessageByType
 import com.mojang.brigadier.context.CommandContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import net.minecraft.registry.RegistryWrapper
+import net.minecraft.core.HolderLookup
 import net.minecraft.server.MinecraftServer
-import net.minecraft.server.command.ServerCommandSource
+import net.minecraft.commands.CommandSourceStack
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -46,7 +46,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
     }
 
-    private fun createShopEntity(resultRow: ResultRow, registries: RegistryWrapper.WrapperLookup): ShopEntity {
+    private fun createShopEntity(resultRow: ResultRow, registries: HolderLookup.Provider): ShopEntity {
         return ShopEntity(
             resultRow[Shops.id].value,
             resultRow[Shops.shopname],
@@ -87,7 +87,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }[Shops.id].value
     }
 
-    fun readById(id: Int, registries: RegistryWrapper.WrapperLookup): ShopEntity? = dbQuery {
+    fun readById(id: Int, registries: HolderLookup.Provider): ShopEntity? = dbQuery {
         Shops.selectAll()
             .where { Shops.id eq id }
             .map {
@@ -97,7 +97,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
     fun readByShopName(shopName: String,
                        playerName: String = "",
-                       registries: RegistryWrapper.WrapperLookup
+                       registries: HolderLookup.Provider
     ): List<ShopEntity?> = dbQuery {
         val condition = if (playerName != "") {
             Shops.selectAll()
@@ -111,7 +111,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
     }
 
-    fun readByOwner(playerName: String, registries: RegistryWrapper.WrapperLookup): List<ShopEntity> = dbQuery {
+    fun readByOwner(playerName: String, registries: HolderLookup.Provider): List<ShopEntity> = dbQuery {
         Shops.selectAll()
             .where { Shops.owner eq playerName }
             .map {
@@ -122,7 +122,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
     fun readByLocation(
         pos: String,
         rangeX: Int, rangeY: Int, rangeZ: Int, world: String,
-        registries: RegistryWrapper.WrapperLookup
+        registries: HolderLookup.Provider
     ): List<ShopEntity> = dbQuery {
         val (x, y, z) = pos.split(",").map { it.toInt() }
         Shops.selectAll()
@@ -135,7 +135,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             }
     }
 
-    fun readByType(registries: RegistryWrapper.WrapperLookup, shopTypes: List<ShopType>): List<ShopEntity> = dbQuery {
+    fun readByType(registries: HolderLookup.Provider, shopTypes: List<ShopType>): List<ShopEntity> = dbQuery {
         Shops.selectAll()
             .where { Shops.type inList shopTypes.map { it.ordinal } }
             .map {
@@ -211,7 +211,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             LOGGER.info("[ImyvmVillagerShop] Migrating ${allShops.size} shops to add ownerUUID")
 
             allShops.forEach { (id, playerName) ->
-                val playerUUID = server.userCache?.findByName(playerName)?.get()?.id ?: UUID.fromString("00000000-0000-4000-8000-000000000000")
+                val playerUUID = server.services().nameToIdCache().get(playerName).map { it.id }.orElse(UUID.fromString("00000000-0000-4000-8000-000000000000"))
                 Shops.update({ Shops.id eq id }) {
                     it[ownerUUID] = playerUUID
                 }
@@ -228,12 +228,12 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
 
         fun rangeSearch(
-            context: CommandContext<ServerCommandSource>,
+            context: CommandContext<CommandSourceStack>,
             searchCondition: String,
         ): Int {
             val player = context.source.player!!
             val results = mutableListOf<ShopEntity?>()
-            val registries = context.source.registryManager
+            val registries = context.source.registryAccess()
             for (i in searchCondition.split(" ")) {
                 if (i.contains(":")) {
                     val (condition, parameter) = i.split(":", limit = 2)
@@ -241,22 +241,22 @@ class ShopService(private val database: Database, private val server: MinecraftS
                         "id" -> mutableListOf(shopDBService.readById(parameter.toInt(), registries))
                         "shopname" -> shopDBService.readByShopName(parameter, registries = registries)
                         "owner" -> shopDBService.readByOwner(parameter, registries)
-                        "location" -> shopDBService.readByLocation(parameter, 0, 0, 0, player.world.asString(), registries)
+                        "location" -> shopDBService.readByLocation(parameter, 0, 0, 0, player.level().dimension().identifier().toString(), registries)
                         "range" -> {
                             val (rangeX,rangeY,rangeZ) = parameter.split(",").map {it.toInt()}
                             shopDBService.readByLocation(
-                                "${player.pos.x},${player.pos.y},${player.pos.z}",
-                                rangeX, rangeY, rangeZ ,player.world.asString(), registries)
+                                "${player.position().x},${player.position().y},${player.position().z}",
+                                rangeX, rangeY, rangeZ ,player.level().dimension().identifier().toString(), registries)
                         }
                         else -> mutableListOf()
                     }
                     if (!results.containsAll(temp)) results.addAll(temp)
                 } else {
-                    player.sendMessage(tr("commands.range.search.failed", i))
+                    player.sendSystemMessage(tr("commands.range.search.failed", i))
                 }
             }
             if (results.isEmpty()) {
-                player.sendMessage(tr("commands.search.none"))
+                player.sendSystemMessage(tr("commands.search.none"))
                 return -1
             }
             for (shop in results) {
@@ -265,7 +265,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             return 1
         }
 
-        fun resetRefreshableSellAndBuy(registries: RegistryWrapper.WrapperLookup) {
+        fun resetRefreshableSellAndBuy(registries: HolderLookup.Provider) {
             shopDBService.readByType(registries, listOf(ShopType.UNLIMITED_BUY, ShopType.REFRESHABLE_BUY,
                 ShopType.REFRESHABLE_SELL)).forEach { shop ->
                 shop.items.forEach { item ->

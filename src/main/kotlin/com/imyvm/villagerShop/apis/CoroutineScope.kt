@@ -5,10 +5,11 @@ import com.imyvm.villagerShop.apis.Translator.tr
 import com.imyvm.villagerShop.commands.pendingOperations
 import com.mojang.brigadier.context.CommandContext
 import kotlinx.coroutines.*
-import net.minecraft.server.command.ServerCommandSource
+import net.minecraft.commands.CommandSourceStack
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.milliseconds
 
 val coroutineContext = SupervisorJob() + Dispatchers.Default
 val customScope = CoroutineScope(coroutineContext)
@@ -16,11 +17,11 @@ val customScope = CoroutineScope(coroutineContext)
 // Tracks the auto-cancel timer Job for each player's pending operation
 val pendingOperationJobs = ConcurrentHashMap<UUID, Job>()
 
-fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long = 61) {
+fun coroutineScope(context: CommandContext<CommandSourceStack>, duration: Long = 61) {
     val playerUUID = context.source.player!!.uuid
     val job = customScope.launch {
-        val result = withTimeoutOrNull(TimeUnit.SECONDS.toMillis(duration)) {
-            delay(TimeUnit.SECONDS.toMillis(duration - 1))
+        val result = withTimeoutOrNull(TimeUnit.SECONDS.toMillis(duration).milliseconds) {
+            delay(TimeUnit.SECONDS.toMillis(duration - 1).milliseconds)
             pendingOperations.remove(playerUUID)
             "Cancel ok"
         }
@@ -29,8 +30,8 @@ fun coroutineScope(context: CommandContext<ServerCommandSource>, duration: Long 
             VillagerShopMain.LOGGER.warn("Operation auto cancel failed！")
         }
         context.source.player?.let { player ->
-            player.sendMessage(tr("commands.confirm.autocancel"))
-            player.server.execute { player.server.playerManager.sendCommandTree(player) }
+            player.sendSystemMessage(tr("commands.confirm.autocancel"))
+            player.level().server.execute { player.level().server.playerList.sendPlayerPermissionLevel(player) }
         }
     }
     pendingOperationJobs[playerUUID] = job
