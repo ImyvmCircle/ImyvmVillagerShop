@@ -105,7 +105,7 @@ class ShopTrade(private val playerEntity: ServerPlayer, private val registries: 
                             this.selectedTrade?.result?.hoverName
                         )
                     )
-                    val shopOwnerEntity = shopEntity?.owner?.let { playerEntity.level().server.playerList.getPlayer(it) }
+                    val shopOwnerEntity = shopEntity?.ownerUUID?.let { playerEntity.level().server.playerList.getPlayer(it) }
                     shopOwnerEntity?.let { shopOwner ->
                         val shopOwnerEconomyData = EconomyData(shopOwner)
                         shopOwnerEconomyData.addMoney(tradeMoney.toLong())

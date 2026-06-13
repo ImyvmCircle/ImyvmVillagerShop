@@ -631,7 +631,6 @@ class ShopCreateGui(
         pageItems.forEachIndexed { idx, (stack, totalCount) ->
             val capturedStack = stack.copy()
             val capturedCount = totalCount
-            val capturedSource = source
             gui.setSlot(idx, GuiElementBuilder.from(capturedStack.copyWithCount(minOf(capturedCount, 64)))
                 .setName(capturedStack.hoverName)
                 .addLoreLine(tr("gui.create.add_item.total", capturedCount))
@@ -641,7 +640,7 @@ class ShopCreateGui(
                     // Pass the container source so the price/submit flow can use it
                     openQtyInputPageFromContainer(
                         shopName, isAdmin, adminShopType, pos, draft,
-                        capturedStack, capturedCount, capturedSource
+                        capturedStack, capturedCount, source
                     )
                 }
             )
@@ -730,7 +729,8 @@ class ShopCreateGui(
                 if (!isAdmin && qty > totalCount) {
                     playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", totalCount))
                     anvilGui.close()
-                    openQtyInputPageFromContainer(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount, source)
+                    openQtyInputPageFromContainer(shopName,
+                        false, adminShopType, pos, draft, selectedStack, totalCount, source)
                     return@setCallback
                 }
                 anvilGui.close()
@@ -786,7 +786,7 @@ class ShopCreateGui(
                     } else 0
                     val newItem = buildItemManager(selectedStack, qty, quick, stock)
                     if (newItem != null && checkCanAddTradeOffer(draft, newItem, playerEntity)) draft.items.add(newItem)
-                    openItemListPage(shopName, isAdmin, adminShopType, pos, draft)
+                    openItemListPage(shopName, false, adminShopType, pos, draft)
                 }
             }
         )
@@ -821,7 +821,7 @@ class ShopCreateGui(
                     } else 0
                     val newItem = buildItemManager(selectedStack, qty, price, stock)
                     if (newItem != null && checkCanAddTradeOffer(draft, newItem, playerEntity)) draft.items.add(newItem)
-                    openItemListPage(shopName, isAdmin, adminShopType, pos, draft)
+                    openItemListPage(shopName, false, adminShopType, pos, draft)
                 }
             }
         )
@@ -874,7 +874,7 @@ class ShopCreateGui(
                 if (!isAdmin && qty > totalCount) {
                     playerEntity.sendSystemMessage(tr("gui.create.qty.not_enough", totalCount))
                     anvilGui.close()
-                    openQtyInputPage(shopName, isAdmin, adminShopType, pos, draft, selectedStack, totalCount)
+                    openQtyInputPage(shopName, false, adminShopType, pos, draft, selectedStack, totalCount)
                     return@setCallback
                 }
                 anvilGui.close()
@@ -920,7 +920,7 @@ class ShopCreateGui(
                     val stock = removeItemFromInventory(playerEntity, selectedStack.copyWithCount(1), qty)
                     val newItem = buildItemManager(selectedStack, qty, quick, stock)
                     if (newItem != null && checkCanAddTradeOffer(draft, newItem, playerEntity)) draft.items.add(newItem)
-                    openItemListPage(shopName, isAdmin, adminShopType, pos, draft)
+                    openItemListPage(shopName, false, adminShopType, pos, draft)
                 }
             }
         )
@@ -942,7 +942,7 @@ class ShopCreateGui(
                     val stock = removeItemFromInventory(playerEntity, selectedStack.copyWithCount(1), qty)
                     val newItem = buildItemManager(selectedStack, qty, price, stock)
                     if (newItem != null && checkCanAddTradeOffer(draft, newItem, playerEntity)) draft.items.add(newItem)
-                    openItemListPage(shopName, isAdmin, adminShopType, pos, draft)
+                    openItemListPage(shopName, false, adminShopType, pos, draft)
                 }
             }
         )

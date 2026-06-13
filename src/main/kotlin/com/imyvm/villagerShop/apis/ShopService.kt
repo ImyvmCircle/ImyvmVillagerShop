@@ -3,20 +3,28 @@ package com.imyvm.villagerShop.apis
 import com.imyvm.villagerShop.VillagerShopMain.Companion.LOGGER
 import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.imyvm.villagerShop.items.ItemManager
 import com.imyvm.villagerShop.items.ItemManager.Companion.restoreItemList
 import com.imyvm.villagerShop.items.ItemManager.Companion.storeItemList
 import com.imyvm.villagerShop.shops.ShopEntity
 import com.imyvm.villagerShop.shops.ShopEntity.Companion.sendMessageByType
 import com.mojang.brigadier.context.CommandContext
+import com.mojang.serialization.JsonOps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import net.minecraft.core.HolderLookup
-import net.minecraft.server.MinecraftServer
+import kotlinx.serialization.json.*
 import net.minecraft.commands.CommandSourceStack
+import net.minecraft.core.HolderLookup
+import net.minecraft.nbt.NbtOps
+import net.minecraft.nbt.TagParser
+import net.minecraft.server.MinecraftServer
+import net.minecraft.world.item.ItemStack
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 class ShopService(private val database: Database, private val server: MinecraftServer) {
@@ -168,6 +176,27 @@ class ShopService(private val database: Database, private val server: MinecraftS
         DataBaseInfo.selectAll().maxByOrNull { it[DataBaseInfo.dbVersion] }?.get(DataBaseInfo.dbVersion) ?: 0
     }
 
+    private fun backupShopsTableBeforeMigration(): String {
+        // 1. 生成带时间戳的唯一备份表名（例如：imyvm_shops_bak_20260613_201530）
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val backupTableName = "${Shops.tableName}_bak_$timestamp"
+
+        try {
+            // 2. 开启一个独立的事务来做备份
+            transaction {
+                // 标准 SQL：创建新表并全量复制数据
+                val sql = "CREATE TABLE $backupTableName AS SELECT * FROM ${Shops.tableName}"
+                exec(sql)
+            }
+            LOGGER.info("[ImyvmVillagerShop] 数据库备份成功！临时快照表已建立: $backupTableName")
+            return backupTableName
+        } catch (e: Exception) {
+            LOGGER.error("[ImyvmVillagerShop] 致命错误：迁移前的自动备份失败！", e)
+            LOGGER.error("[ImyvmVillagerShop] 为防止数据损坏，已强行熔断并中止数据迁移流程！")
+            throw e
+        }
+    }
+
     private fun applyMigration(version: Int, migrationName: String, migration: () -> Unit) = dbQuery {
         val exists = DataBaseInfo.selectAll()
             .where { DataBaseInfo.dbVersion eq version }
@@ -187,12 +216,33 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
     private fun applyMigrations() {
         val currentVersion = getCurrentDbVersion()
-        if (currentVersion < 1) {
-            applyMigration(1, "Add ownerUUID column") {
-                migrateToAddOwnerUUID()
-            }
+        val targetVersion = 2
+        if (currentVersion >= targetVersion) {
+            LOGGER.info("[ImyvmVillagerShop] 数据库已是最新版本 ($currentVersion)，无需迁移。")
+            return
         }
-        // Add future migrations here
+        val backupTable = backupShopsTableBeforeMigration()
+        try {
+            if (currentVersion < 1) {
+                applyMigration(1, "Add ownerUUID column") {
+                    migrateToAddOwnerUUID()
+                }
+            }
+            if (currentVersion < 2) {
+                applyMigration(2, "Migrate ItemManager serialization from NBT string to JSON elements") {
+                    migrateToJsonElements()
+                }
+            }
+            // Add future migrations here
+
+        } catch (e: Exception) {
+            LOGGER.error("[ImyvmVillagerShop] 数据库迁移过程中发生致命异常！数据可能已损坏！", e)
+            LOGGER.error("[ImyvmVillagerShop] 请通过 Navicat 或数据库控制台执行以下两条 SQL 来完全恢复原状：")
+            LOGGER.error("    DROP TABLE ${Shops.tableName};")
+            LOGGER.error("    ALTER TABLE $backupTable RENAME TO ${Shops.tableName};")
+
+            throw e // 强行抛出，阻止插件继续加载，防止脏数据在服务器运行时扩散
+        }
     }
 
     private fun migrateToAddOwnerUUID() {
@@ -219,6 +269,46 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
             LOGGER.info("[ImyvmVillagerShop] Migration to add ownerUUID completed")
         }
+    }
+
+    private fun migrateToJsonElements() {
+        val allShops = Shops.selectAll().map { row ->
+            row[Shops.id].value to row[Shops.items]
+        }
+
+        LOGGER.info("[ImyvmVillagerShop] Migrating ${allShops.size} shops to JSON elements for items")
+
+        val itemDataJson = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+        }
+
+        allShops.forEach { (id, itemsString) ->
+            val outerList = Json.decodeFromString<List<String>>(itemsString)
+            val migratedInnerStrings = outerList.map { innerJsonStr ->
+                val jsonObject = Json.parseToJsonElement(innerJsonStr).jsonObject
+                val mutableMap = jsonObject.toMutableMap().apply {
+                    val oldNbtString = this["itemNbt"]?.jsonPrimitive?.content ?: return@apply
+                    val nbtOps = server.registryAccess().createSerializationContext(NbtOps.INSTANCE)
+                    val nbt = TagParser.parseCompoundFully(oldNbtString)
+                    val itemStack = ItemStack.CODEC.parse(nbtOps, nbt).getOrThrow()
+                    val jsonOps = server.registryAccess().createSerializationContext(JsonOps.INSTANCE)
+                    val gsonElement = ItemStack.CODEC.encodeStart(jsonOps, itemStack).getOrThrow()
+                    val newItemsElement = itemDataJson.parseToJsonElement(gsonElement.toString())
+                    remove("itemNbt")
+                    put("itemStackJsonElement", newItemsElement)
+                }
+                val migratedObject = JsonObject(mutableMap)
+                val verifiedNewConfig = Json.decodeFromJsonElement<ItemManager.ItemData>(migratedObject)
+                Json.encodeToString(verifiedNewConfig)
+            }
+
+            Shops.update({ Shops.id eq id }) {
+                it[items] = Json.encodeToString(migratedInnerStrings)
+            }
+        }
+
+        LOGGER.info("[ImyvmVillagerShop] Migration to JSON elements for items completed")
     }
 
     companion object {

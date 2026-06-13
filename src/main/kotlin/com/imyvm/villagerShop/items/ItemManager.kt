@@ -1,6 +1,8 @@
 package com.imyvm.villagerShop.items
 
+import com.google.gson.JsonParser
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.mojang.serialization.JsonOps
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import net.minecraft.commands.arguments.item.ItemInput
@@ -9,8 +11,6 @@ import net.minecraft.core.HolderLookup
 import net.minecraft.core.component.DataComponentExactPredicate
 import net.minecraft.core.component.DataComponents
 import net.minecraft.core.registries.BuiltInRegistries
-import net.minecraft.nbt.NbtOps
-import net.minecraft.nbt.TagParser
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.entity.player.Player
 import net.minecraft.world.item.Item
@@ -44,28 +44,39 @@ class ItemManager(
 
     @Serializable
     data class ItemData(
-        val itemNbt: String,
+        val itemStackJsonElement: kotlinx.serialization.json.JsonElement,
         val sellPerTime: Int,
         val price: Double,
         val stock: MutableMap<String, Int>
     )
 
     fun toJsonString(): String {
-        val nbt = encodeItemStack(item.itemStack, registries)
-        val itemData = ItemData(nbt, this@ItemManager.sellPerTime, price, stock)
+        val itemStackJsonElement = encodeItemStackJsonElement(item.itemStack, registries)
+        val itemData = ItemData(itemStackJsonElement, this@ItemManager.sellPerTime, price, stock)
         return Json.encodeToString(itemData)
     }
 
     companion object {
-        private fun encodeItemStack(stack: ItemStack, registries: HolderLookup.Provider): String {
-            val ops = registries.createSerializationContext(NbtOps.INSTANCE)
-            return ItemStack.CODEC.encodeStart(ops, stack).getOrThrow().toString()
+        private val itemDataJson = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = false
         }
 
-        private fun decodeItemStack(itemNbt: String, registries: HolderLookup.Provider): ItemStack {
-            val ops = registries.createSerializationContext(NbtOps.INSTANCE)
-            val nbt = TagParser.parseCompoundFully(itemNbt)
-            return ItemStack.CODEC.parse(ops, nbt).getOrThrow()
+        private fun encodeItemStackJsonElement(stack: ItemStack, registries: HolderLookup.Provider): kotlinx.serialization.json.JsonElement {
+            val ops = registries.createSerializationContext(JsonOps.INSTANCE)
+            val gsonElement = ItemStack.CODEC.encodeStart(ops, stack).getOrThrow()
+            return itemDataJson.parseToJsonElement(gsonElement.toString())
+        }
+
+        private fun decodeItemStackJsonElement(element: kotlinx.serialization.json.JsonElement, registries: HolderLookup.Provider): ItemStack {
+            val ops = registries.createSerializationContext(JsonOps.INSTANCE)
+            val rawJsonString = if (element is kotlinx.serialization.json.JsonPrimitive) {
+                element.content
+            } else {
+                element.toString()
+            }
+            val gsonElement = JsonParser.parseString(rawJsonString)
+            return ItemStack.CODEC.parse(ops, gsonElement).getOrThrow()
         }
 
         fun countItemInInventory(player: Player, item: Item): Int {
@@ -131,7 +142,7 @@ class ItemManager(
             val itemManagerList = mutableListOf<ItemManager>()
 
             itemDataList.forEach { itemData ->
-                val itemStack = decodeItemStack(itemData.itemNbt, registries)
+                val itemStack = decodeItemStackJsonElement(itemData.itemStackJsonElement, registries)
                 if (!itemStack.isEmpty) {
                     itemManagerList.add(
                         ItemManager(
