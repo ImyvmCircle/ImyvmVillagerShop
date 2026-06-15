@@ -3,7 +3,7 @@ package com.imyvm.villagerShop.shops
 import net.minecraft.core.BlockPos
 import net.minecraft.network.chat.Component
 import net.minecraft.server.level.ServerLevel
-import net.minecraft.world.entity.EntityType
+import net.minecraft.world.entity.EntityTypes
 import net.minecraft.world.entity.npc.villager.Villager
 
 fun spawnInvulnerableVillager(
@@ -12,7 +12,7 @@ fun spawnInvulnerableVillager(
     type: Int = 0,
     id: Int
 ): Villager {
-    val villager = Villager(EntityType.VILLAGER, world)
+    val villager = Villager(EntityTypes.VILLAGER, world)
     villager.setPos(
         pos.x.toDouble() + if (pos.x >= 0) 0.5 else -0.5,
         pos.y.toDouble() + 1,

@@ -819,7 +819,7 @@ private fun submitTempShop(context: CommandContext<CommandSourceStack>): Int {
     if (tempShop.shopType == 0) {
         calculateAndTakeMoney(player, tempShop.takeMoney)
         shopEntity.playerShopCreate()
-    } else if (Permissions.check(context.source, VillagerShopMain.MOD_ID + ".admin", 3)) {
+    } else if (Permissions.check(context.source, VillagerShopMain.MOD_ID + ".admin", PermissionLevel.ADMINS)) {
         shopEntity.adminShopCreate()
     } else {
         player.sendSystemMessage(tr("commands.shop.create.premission"))
@@ -840,7 +840,6 @@ private fun addStock(
     itemStack: ItemStack,
     requestedAmount: Int
 ): Int {
-    val player = context.source.player!!
     val shopName = getString(context, "shopName")
     return addStockForShopName(context, shopName, itemStack, requestedAmount)
 }

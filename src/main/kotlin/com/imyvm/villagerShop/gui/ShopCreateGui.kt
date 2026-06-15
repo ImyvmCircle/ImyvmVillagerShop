@@ -137,7 +137,7 @@ class ShopCreateGui(
         }
         anvilGui.title = tr("gui.create.step2.title")
         anvilGui.setSlot(0, buildAnvilInputItem(ItemStack(Items.NAME_TAG), tr("gui.create.name.placeholder")))
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.name.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -184,32 +184,32 @@ class ShopCreateGui(
 
         // ── X axis adjustment (row 2, slots 9-17) ──
         // -5  -1   [X display]  +1  +5
-        gui.setSlot(10, GuiElementBuilder(Items.RED_CONCRETE)
+        gui.setSlot(10, GuiElementBuilder(Items.CONCRETE.red)
             .setName(tr("gui.create.pos.x_minus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX - 5, offsetY, offsetZ) }
         )
-        gui.setSlot(11, GuiElementBuilder(Items.ORANGE_CONCRETE)
+        gui.setSlot(11, GuiElementBuilder(Items.CONCRETE.orange)
             .setName(tr("gui.create.pos.x_minus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX - 1, offsetY, offsetZ) }
         )
-        gui.setSlot(13, GuiElementBuilder(Items.WHITE_CONCRETE)
+        gui.setSlot(13, GuiElementBuilder(Items.CONCRETE.white)
             .setName(Component.literal("X: ${pos.x}  (${if (offsetX >= 0) "+$offsetX" else "$offsetX"})"))
         )
-        gui.setSlot(15, GuiElementBuilder(Items.ORANGE_CONCRETE)
+        gui.setSlot(15, GuiElementBuilder(Items.CONCRETE.orange)
             .setName(tr("gui.create.pos.x_plus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX + 1, offsetY, offsetZ) }
         )
-        gui.setSlot(16, GuiElementBuilder(Items.RED_CONCRETE)
+        gui.setSlot(16, GuiElementBuilder(Items.CONCRETE.red)
             .setName(tr("gui.create.pos.x_plus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX + 5, offsetY, offsetZ) }
         )
 
         // ── Y axis adjustment (row 3, slots 18-26) ──
-        gui.setSlot(19, GuiElementBuilder(Items.BLUE_CONCRETE)
+        gui.setSlot(19, GuiElementBuilder(Items.CONCRETE.blue)
             .setName(tr("gui.create.pos.y_minus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY - 5, offsetZ) }
         )
-        gui.setSlot(20, GuiElementBuilder(Items.LIGHT_BLUE_CONCRETE)
+        gui.setSlot(20, GuiElementBuilder(Items.CONCRETE.lightBlue)
             .setName(tr("gui.create.pos.y_minus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY - 1, offsetZ) }
         )
@@ -219,32 +219,32 @@ class ShopCreateGui(
             .addLoreLine(tr("gui.create.pos.click_use"))
             .setCallback { _, _, _, _ -> gui.close(); openItemListPage(shopName, isAdmin, adminShopType, pos) }
         )
-        gui.setSlot(24, GuiElementBuilder(Items.LIGHT_BLUE_CONCRETE)
+        gui.setSlot(24, GuiElementBuilder(Items.CONCRETE.lightBlue)
             .setName(tr("gui.create.pos.y_plus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY + 1, offsetZ) }
         )
-        gui.setSlot(25, GuiElementBuilder(Items.BLUE_CONCRETE)
+        gui.setSlot(25, GuiElementBuilder(Items.CONCRETE.blue)
             .setName(tr("gui.create.pos.y_plus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY + 5, offsetZ) }
         )
 
         // ── Z axis adjustment (row 4, slots 27-35) ──
-        gui.setSlot(28, GuiElementBuilder(Items.GREEN_CONCRETE)
+        gui.setSlot(28, GuiElementBuilder(Items.CONCRETE.green)
             .setName(tr("gui.create.pos.z_minus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY, offsetZ - 5) }
         )
-        gui.setSlot(29, GuiElementBuilder(Items.LIME_CONCRETE)
+        gui.setSlot(29, GuiElementBuilder(Items.CONCRETE.lime)
             .setName(tr("gui.create.pos.z_minus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY, offsetZ - 1) }
         )
-        gui.setSlot(31, GuiElementBuilder(Items.WHITE_CONCRETE)
+        gui.setSlot(31, GuiElementBuilder(Items.CONCRETE.white)
             .setName(Component.literal("Z: ${pos.z}  (${if (offsetZ >= 0) "+$offsetZ" else "$offsetZ"})"))
         )
-        gui.setSlot(33, GuiElementBuilder(Items.LIME_CONCRETE)
+        gui.setSlot(33, GuiElementBuilder(Items.CONCRETE.lime)
             .setName(tr("gui.create.pos.z_plus", 1))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY, offsetZ + 1) }
         )
-        gui.setSlot(34, GuiElementBuilder(Items.GREEN_CONCRETE)
+        gui.setSlot(34, GuiElementBuilder(Items.CONCRETE.green)
             .setName(tr("gui.create.pos.z_plus", 5))
             .setCallback { _, _, _, _ -> openPosConfirmPage(shopName, isAdmin, adminShopType, basePos, offsetX, offsetY, offsetZ + 5) }
         )
@@ -315,7 +315,7 @@ class ShopCreateGui(
         // Bottom row (slots 27-35): controls
         // Slot 28: Add item
         if (draft.items.size < 7) {
-            gui.setSlot(28, GuiElementBuilder(Items.LIME_DYE)
+            gui.setSlot(28, GuiElementBuilder(Items.DYE.lime)
                 .setName(tr("gui.create.item.add"))
                 .setCallback { _, _, _, _ -> gui.close(); openAddItemPage(shopName, isAdmin, adminShopType, pos, draft) }
             )
@@ -324,7 +324,7 @@ class ShopCreateGui(
         }
 
         // Slot 29: Cancel
-        gui.setSlot(29, GuiElementBuilder(Items.RED_DYE)
+        gui.setSlot(29, GuiElementBuilder(Items.DYE.red)
             .setName(tr("gui.create.cancel"))
             .setCallback { _, _, _, _ ->
                 if (!isAdmin) offerItemToPlayer(playerEntity, draft.items)
@@ -449,7 +449,7 @@ class ShopCreateGui(
             )
         }
         // Browse containers button
-        gui.setSlot(43, GuiElementBuilder(Items.PURPLE_SHULKER_BOX)
+        gui.setSlot(43, GuiElementBuilder(Items.DYED_SHULKER_BOX.purple)
             .setName(tr("gui.create.container.browse"))
             .addLoreLine(tr("gui.create.container.browse.lore"))
             .setCallback { _, _, _, _ -> gui.close(); openContainerPickerPage(shopName, isAdmin, adminShopType, pos, draft) }
@@ -715,7 +715,7 @@ class ShopCreateGui(
                     selectedStack, quick.toInt(), totalCount, source)
             }
         )
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.qty.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -790,7 +790,7 @@ class ShopCreateGui(
                 }
             }
         )
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.price.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -860,7 +860,7 @@ class ShopCreateGui(
                 openPriceNumberInputPage(shopName, isAdmin, adminShopType, pos, draft, selectedStack, quick.toInt(), totalCount)
             }
         )
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.qty.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -924,7 +924,7 @@ class ShopCreateGui(
                 }
             }
         )
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.price.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -978,7 +978,7 @@ class ShopCreateGui(
                 openItemListPage(shopName, true, adminShopType, pos, draft)
             }
         )
-        anvilGui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        anvilGui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.stock.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -1030,7 +1030,7 @@ class ShopCreateGui(
             .addLoreLine(if (isAdmin) tr("gui.create.submit.admin") else tr("gui.create.submit.cost", checkPlayerMoney(playerEntity, registryAccess) / 100))
         )
 
-        gui.setSlot(11, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(11, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.confirm.confirm"))
             .setCallback { _, _, _, _ ->
                 gui.close()
@@ -1038,7 +1038,7 @@ class ShopCreateGui(
             }
         )
 
-        gui.setSlot(15, GuiElementBuilder(Items.RED_DYE)
+        gui.setSlot(15, GuiElementBuilder(Items.DYE.red)
             .setName(tr("gui.confirm.cancel"))
             .setCallback { _, _, _, _ ->
                 gui.close()

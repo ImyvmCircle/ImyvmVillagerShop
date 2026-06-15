@@ -232,7 +232,7 @@ class ShopManageGui(
         gui.setSlot(0, buildAnvilInputItem(ItemStack(Items.NAME_TAG), tr("gui.create.name.placeholder"))
             .addLoreLine(tr("commands.shopinfo.shopname", shop.shopname))
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.manage.rename.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -273,7 +273,7 @@ class ShopManageGui(
         }
 
         fun offsetLabel(axis: String, value: Int, offset: Int) =
-            GuiElementBuilder(Items.WHITE_CONCRETE)
+            GuiElementBuilder(Items.CONCRETE.white)
                 .setName(Component.literal("$axis: $value  (${if (offset >= 0) "+$offset" else "$offset"})"))
 
         // Current pos display
@@ -283,35 +283,35 @@ class ShopManageGui(
         )
 
         // X row (10-16)
-        gui.setSlot(10, GuiElementBuilder(Items.RED_CONCRETE).setName(tr("gui.create.pos.x_minus", 5))
+        gui.setSlot(10, GuiElementBuilder(Items.CONCRETE.red).setName(tr("gui.create.pos.x_minus", 5))
             .setCallback { _, _, _, _ -> adj(-5, "x")() })
-        gui.setSlot(11, GuiElementBuilder(Items.ORANGE_CONCRETE).setName(tr("gui.create.pos.x_minus", 1))
+        gui.setSlot(11, GuiElementBuilder(Items.CONCRETE.orange).setName(tr("gui.create.pos.x_minus", 1))
             .setCallback { _, _, _, _ -> adj(-1, "x")() })
         gui.setSlot(13, offsetLabel("X", pos.x, offsetX))
-        gui.setSlot(15, GuiElementBuilder(Items.ORANGE_CONCRETE).setName(tr("gui.create.pos.x_plus", 1))
+        gui.setSlot(15, GuiElementBuilder(Items.CONCRETE.orange).setName(tr("gui.create.pos.x_plus", 1))
             .setCallback { _, _, _, _ -> adj(1, "x")() })
-        gui.setSlot(16, GuiElementBuilder(Items.RED_CONCRETE).setName(tr("gui.create.pos.x_plus", 5))
+        gui.setSlot(16, GuiElementBuilder(Items.CONCRETE.red).setName(tr("gui.create.pos.x_plus", 5))
             .setCallback { _, _, _, _ -> adj(5, "x")() })
 
         // Y row (19-25)
-        gui.setSlot(19, GuiElementBuilder(Items.BLUE_CONCRETE).setName(tr("gui.create.pos.y_minus", 5))
+        gui.setSlot(19, GuiElementBuilder(Items.CONCRETE.blue).setName(tr("gui.create.pos.y_minus", 5))
             .setCallback { _, _, _, _ -> adj(-5, "y")() })
-        gui.setSlot(20, GuiElementBuilder(Items.LIGHT_BLUE_CONCRETE).setName(tr("gui.create.pos.y_minus", 1))
+        gui.setSlot(20, GuiElementBuilder(Items.CONCRETE.lightBlue).setName(tr("gui.create.pos.y_minus", 1))
             .setCallback { _, _, _, _ -> adj(-1, "y")() })
-        gui.setSlot(24, GuiElementBuilder(Items.LIGHT_BLUE_CONCRETE).setName(tr("gui.create.pos.y_plus", 1))
+        gui.setSlot(24, GuiElementBuilder(Items.CONCRETE.lightBlue).setName(tr("gui.create.pos.y_plus", 1))
             .setCallback { _, _, _, _ -> adj(1, "y")() })
-        gui.setSlot(25, GuiElementBuilder(Items.BLUE_CONCRETE).setName(tr("gui.create.pos.y_plus", 5))
+        gui.setSlot(25, GuiElementBuilder(Items.CONCRETE.blue).setName(tr("gui.create.pos.y_plus", 5))
             .setCallback { _, _, _, _ -> adj(5, "y")() })
 
         // Z row (28-34)
-        gui.setSlot(28, GuiElementBuilder(Items.GREEN_CONCRETE).setName(tr("gui.create.pos.z_minus", 5))
+        gui.setSlot(28, GuiElementBuilder(Items.CONCRETE.green).setName(tr("gui.create.pos.z_minus", 5))
             .setCallback { _, _, _, _ -> adj(-5, "z")() })
-        gui.setSlot(29, GuiElementBuilder(Items.LIME_CONCRETE).setName(tr("gui.create.pos.z_minus", 1))
+        gui.setSlot(29, GuiElementBuilder(Items.CONCRETE.lime).setName(tr("gui.create.pos.z_minus", 1))
             .setCallback { _, _, _, _ -> adj(-1, "z")() })
         gui.setSlot(31, offsetLabel("Z", pos.z, offsetZ))
-        gui.setSlot(33, GuiElementBuilder(Items.LIME_CONCRETE).setName(tr("gui.create.pos.z_plus", 1))
+        gui.setSlot(33, GuiElementBuilder(Items.CONCRETE.lime).setName(tr("gui.create.pos.z_plus", 1))
             .setCallback { _, _, _, _ -> adj(1, "z")() })
-        gui.setSlot(34, GuiElementBuilder(Items.GREEN_CONCRETE).setName(tr("gui.create.pos.z_plus", 5))
+        gui.setSlot(34, GuiElementBuilder(Items.CONCRETE.green).setName(tr("gui.create.pos.z_plus", 5))
             .setCallback { _, _, _, _ -> adj(5, "z")() })
 
         // Bottom row
@@ -371,7 +371,7 @@ class ShopManageGui(
 
         // Add item button
         if (shop.items.size < 7) {
-            gui.setSlot(27, GuiElementBuilder(Items.LIME_DYE)
+            gui.setSlot(27, GuiElementBuilder(Items.DYE.lime)
                 .setName(tr("gui.create.item.add"))
                 .setCallback { _, _, _, _ -> gui.close(); openPickItemPage(shop) }
             )
@@ -450,7 +450,7 @@ class ShopManageGui(
                 openRestockQtyInputPage(shop, item, null)
             }
         )
-        gui.setSlot(12, GuiElementBuilder(Items.PURPLE_SHULKER_BOX)
+        gui.setSlot(12, GuiElementBuilder(Items.DYED_SHULKER_BOX.purple)
             .setName(tr("gui.manage.stock.source.container"))
             .addLoreLine(tr("gui.create.container.browse.lore"))
             .setCallback { _, _, _, _ ->
@@ -586,7 +586,7 @@ class ShopManageGui(
                 openItemManagePage(shop)
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.qty.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -637,7 +637,7 @@ class ShopManageGui(
             .addLoreLine(if (stock > 0) tr("gui.manage.items.delete.return", stock) else tr("gui.manage.items.delete.no_return"))
         )
 
-        gui.setSlot(11, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(11, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.manage.items.delete.confirm"))
             .setCallback { _, _, _, _ ->
                 shop.deleteTradedItem(item.item.itemStack)
@@ -649,7 +649,7 @@ class ShopManageGui(
                 openItemManagePage(shop)
             }
         )
-        gui.setSlot(15, GuiElementBuilder(Items.RED_DYE)
+        gui.setSlot(15, GuiElementBuilder(Items.DYE.red)
             .setName(tr("gui.manage.items.delete.cancel"))
             .setCallback { _, _, _, _ -> gui.close(); openItemManagePage(shop) }
         )
@@ -674,7 +674,7 @@ class ShopManageGui(
                 openEditItemPricePage(shop, item, quick)
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.qty.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -712,7 +712,7 @@ class ShopManageGui(
                 openItemManagePage(shop)
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.price.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -796,7 +796,7 @@ class ShopManageGui(
             )
         }
         // Container browse shortcut
-        gui.setSlot(43, GuiElementBuilder(Items.PURPLE_SHULKER_BOX)
+        gui.setSlot(43, GuiElementBuilder(Items.DYED_SHULKER_BOX.purple)
             .setName(tr("gui.create.container.browse"))
             .addLoreLine(tr("gui.create.container.browse.lore"))
             .setCallback { _, _, _, _ -> gui.close(); openPickContainerPage(shop) }
@@ -990,7 +990,7 @@ class ShopManageGui(
                 openAddPricePage(shop, stack, quick, totalCount, source)
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.qty.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -1050,7 +1050,7 @@ class ShopManageGui(
                 }
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.price.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -1102,7 +1102,7 @@ class ShopManageGui(
                 openItemManagePage(shop)
             }
         )
-        gui.setSlot(2, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(2, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.create.stock.confirm"))
             .setCallback { _, clickType, _, _ ->
                 if (clickType != ClickType.MOUSE_LEFT && clickType != ClickType.MOUSE_RIGHT) return@setCallback
@@ -1136,7 +1136,7 @@ class ShopManageGui(
             .addLoreLine(tr("gui.manage.delete.warn"))
             .addLoreLine(tr("gui.manage.delete.warn2"))
         )
-        gui.setSlot(11, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(11, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.manage.delete.confirm"))
             .setCallback { _, _, _, _ ->
                 customScope.launch {
@@ -1152,7 +1152,7 @@ class ShopManageGui(
                 }
             }
         )
-        gui.setSlot(15, GuiElementBuilder(Items.RED_DYE)
+        gui.setSlot(15, GuiElementBuilder(Items.DYE.red)
             .setName(tr("gui.manage.delete.cancel"))
             .setCallback { _, _, _, _ -> gui.close(); openShopMainPage(shop) }
         )

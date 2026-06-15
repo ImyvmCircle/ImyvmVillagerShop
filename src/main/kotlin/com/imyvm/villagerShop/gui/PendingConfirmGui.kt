@@ -20,7 +20,7 @@ object PendingConfirmGui {
             .addLoreLine(tr("gui.confirm.tip"))
         )
 
-        gui.setSlot(11, GuiElementBuilder(Items.LIME_DYE)
+        gui.setSlot(11, GuiElementBuilder(Items.DYE.lime)
             .setName(tr("gui.confirm.confirm"))
             .setCallback { _, _, _, _ ->
                 val op = pendingOperations.remove(player.uuid)
@@ -36,7 +36,7 @@ object PendingConfirmGui {
             }
         )
 
-        gui.setSlot(15, GuiElementBuilder(Items.RED_DYE)
+        gui.setSlot(15, GuiElementBuilder(Items.DYE.red)
             .setName(tr("gui.confirm.cancel"))
             .setCallback { _, _, _, _ ->
                 val hadOp = pendingOperations.remove(player.uuid) != null
