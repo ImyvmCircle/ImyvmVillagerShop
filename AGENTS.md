@@ -5,8 +5,8 @@ If you cannot follow a rule, **stop and ask for clarification** before making ch
 
 ## 0) Scope
 - Target platform: Fabric
-- Minecraft: 1.21
-- JDK: 21
+- Minecraft: 26.2
+- JDK: 25
 - Build tool: Gradle + ShadowJar
 - Entrypoint: `com.imyvm.villagerShop.VillagerShopMain`
 - Run task: `./gradlew runServer`

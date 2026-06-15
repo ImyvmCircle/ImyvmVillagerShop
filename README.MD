@@ -1,44 +1,28 @@
 # Imyvm Villager Shop
 
-[![Lisense](https://img.shields.io/github/license/Dream-Rainy/ImyvmVillagerShop?style=for-the-badge)](https://github.com/Dream-Rainy/ImyvmVillagerShop/blob/1.19/LICENSE)
-![Build](https://img.shields.io/github/actions/workflow/status/Dream-Rainy/ImyvmVillagerShop/build.yml?style=for-the-badge)
+[![License](https://img.shields.io/github/license/ImyvmCircle/ImyvmVillagerShop?style=for-the-badge)](https://github.com/ImyvmCircle/ImyvmVillagerShop/blob/master/LICENSE)
+![Build](https://img.shields.io/github/actions/workflow/status/ImyvmCircle/ImyvmVillagerShop/build.yml?style=for-the-badge)
 
-一个基于 Fabric 的村民商店模组（Minecraft 1.21，JDK 21）。
+一个基于 Fabric 的村民商店模组。
 
 已知不兼容模组: [OffersHUD](https://github.com/naari3/offers-hud)
 
 > 所有命令均支持短别名 `/vlsp`，例如 `/vlsp create`。
 
-## 快速开始
+## 玩家快速开始
 
-### 1) 构建与打包
-
-```bash
-./gradlew build
-./gradlew shadowJar
-```
-
-- 构建产物在 `build/libs/`。
-
-### 2) 本地运行服务端
-
-```bash
-./gradlew runServer
-```
-
-### 3) 进入游戏后最常用操作
+### 最常用命令
 
 ```text
 /villagerShop
 /villagerShop create
 /villagerShop manager
-/villagerShop admin
 ```
 
-- `villagerShop` 无参数会直接打开创建 GUI。
-- `create` 打开商店创建 GUI。
-- `manager` 打开你自己的商店列表与管理 GUI。
-- `admin` 为仅 CLI 的管理员命令分组。
+- `/villagerShop` 无参数会直接打开创建 GUI。
+- `/villagerShop create` 打开商店创建 GUI。
+- `/villagerShop manager` 打开你自己的商店列表与管理 GUI。
+- 管理员命令需要使用具体子命令，例如 `/villagerShop admin reload`。
 
 ## 玩家使用指南
 
@@ -79,7 +63,7 @@
 | 用指定物品补满 | `/villagerShop manager stock item <item> <shopName>` | `/villagerShop manager stock <shopName> <item>` |
 | 用指定物品补指定数量 | `/villagerShop manager stock item <item> <amount> <shopName>` | `/villagerShop manager stock <shopName> <item> <amount>` |
 
-补货税计算: `价格 * 数量 * 税率`（税率默认 `0.01`）。
+补货税率配置项为 `core.tax.restock`，默认值为 `0.01`。
 
 #### 商品管理（命令）
 
@@ -112,11 +96,19 @@
 
 > 管理员删除商店或执行 `setAdmin` 不会返还库存给玩家。
 
+### 管理员权限节点
+
+| 权限节点 | 默认等级 | 对应功能 |
+|------|------|------|
+| `imyvm_villagershop.admin` | 管理员 | 创建管理员商店、调整税率、重载配置、重生成实体、设置管理员商店 |
+| `imyvm_villagershop.manage` | 游戏管理员 | 搜索商店 |
+| `imyvm_villagershop.manager` | 游戏管理员 | 通过 ID 删除任意商店 |
+
 ## 配置文件
 
 配置文件名: `config/Imyvm_VillagerShop.conf`
 
-```yaml
+```hocon
 core {
   language="zh_cn"
   tax {
@@ -162,6 +154,34 @@ core {
 
 - 创建费用由代码按“当前拥有商店数量”动态计算（见 `ShopEntity.checkPlayerMoney`）。
 - 推荐优先使用 GUI，命令主要用于批量或高级管理。
+
+## 开发者信息
+
+### 构建与打包
+
+```bash
+./gradlew build
+./gradlew shadowJar
+```
+
+- 构建产物在 `build/libs/`。
+- 本地解析 GitHub Packages 依赖时，可能需要设置 `GITHUB_USERNAME` 和 `GITHUB_TOKEN` 环境变量。
+
+### 本地运行服务端
+
+```bash
+./gradlew runServer
+```
+
+### 项目信息
+
+- 平台: Fabric
+- Minecraft: `26.2-rc-2`
+- JDK: `25`
+- 入口类: `com.imyvm.villagerShop.VillagerShopMain`
+- Mod ID: `imyvm_villagershop`
+- 数据库访问层: Exposed
+- 支持数据库: H2 / PostgreSQL / MySQL
 
 ## TODO
 

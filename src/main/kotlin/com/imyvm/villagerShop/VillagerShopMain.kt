@@ -14,13 +14,13 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.player.UseEntityCallback
-import net.minecraft.command.CommandRegistryAccess
-import net.minecraft.entity.passive.VillagerEntity
-import net.minecraft.registry.RegistryWrapper
+import net.minecraft.commands.CommandBuildContext
+import net.minecraft.core.HolderLookup
+import net.minecraft.network.chat.Component
 import net.minecraft.server.MinecraftServer
-import net.minecraft.server.network.ServerPlayerEntity
-import net.minecraft.text.Text
-import net.minecraft.util.ActionResult
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.world.InteractionResult
+import net.minecraft.world.entity.npc.villager.Villager
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -35,26 +35,26 @@ class VillagerShopMain : ModInitializer {
 	val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
 	override fun onInitialize() {
 		CONFIG.loadAndSave()
-		CommandRegistrationCallback.EVENT.register { dispatcher, commandRegistryAccess, _ ->
-			registryAccess = commandRegistryAccess
-			register(dispatcher, commandRegistryAccess)
+		CommandRegistrationCallback.EVENT.register { dispatcher, registryAccess, _ ->
+			register(dispatcher, registryAccess)
+			VillagerShopMain.registryAccess = registryAccess
 		}
         ServerLifecycleEvents.SERVER_STARTING.register { server ->
             shopDBService = ShopService(DbSettings.db, server)
         }
 		ServerLifecycleEvents.SERVER_STARTED.register { server ->
 			itemList.addAll(purchaseItemLoad(server))
-			scheduleDailyTask(server.registryManager)
+			scheduleDailyTask(server.registryAccess())
 		}
 		ServerEntityEvents.ENTITY_LOAD.register { entity, serverWorld ->
-			if (entity is VillagerEntity && entity.commandTags.contains("VillagerShop")) {
+			if (entity is Villager && entity.entityTags().contains("VillagerShop")) {
 				val id =
-					entity.commandTags.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull()
+					entity.entityTags().firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull()
 						?: -1
 				if (id != -1) {
 					customScope.launch {
 						val shop = shopDBService.dbQueryAsync {
-							shopDBService.readById(id, serverWorld.registryManager)
+							shopDBService.readById(id, serverWorld.registryAccess())
 						}
 						shop?.let { s ->
 							serverWorld.server.execute {
@@ -63,7 +63,7 @@ class VillagerShopMain : ModInitializer {
 									s.posY.toDouble() + 1,
 									s.posZ.toDouble() + 0.5
 								)
-								entity.customName = Text.of(s.shopname)
+								entity.customName = Component.literal(s.shopname)
 								synchronized(shopEntityList) {
 									shopEntityList[s.id] = entity
 								}
@@ -77,38 +77,38 @@ class VillagerShopMain : ModInitializer {
 			scheduler.shutdownNow()
 		}
 		UseEntityCallback.EVENT.register { player, world, _, entity, _ ->
-			if (entity.commandTags.contains("VillagerShop") && player is ServerPlayerEntity && entity is VillagerEntity && !containGui(entity)) {
-				val shopId = entity.commandTags
+			if (entity.entityTags().contains("VillagerShop") && player is ServerPlayer && entity is Villager && !containGui(entity)) {
+				val shopId = entity.entityTags()
 					.firstOrNull { it.startsWith("id:") }?.split(":")?.getOrNull(1)?.toIntOrNull() ?: -1
 				// Owner right-clicks (without sneak) → manage GUI
 				// Owner sneaks + right-clicks → trade GUI (preview as customer)
 				// Non-owner → trade GUI
-				if (shopId != -1 && !player.isSneaking) {
+				if (shopId != -1 && !player.isShiftKeyDown) {
 					customScope.launch {
 						val shop = shopDBService.dbQueryAsync {
-							shopDBService.readById(shopId, world.registryManager)
+							shopDBService.readById(shopId, world.registryAccess())
 						}
 						world.server?.execute {
 							if (shop != null && shop.ownerUUID == player.uuid && shop.admin == 0) {
 								ShopManageGui(player, registryAccess).openFor(shop)
 							} else {
-								ShopTrade(player, world.registryManager).open(entity)
+								ShopTrade(player, world.registryAccess()).open(entity)
 							}
 						}
 					}
 				} else {
-					ShopTrade(player, world.registryManager).open(entity)
+					ShopTrade(player, world.registryAccess()).open(entity)
 				}
-				ActionResult.SUCCESS
+				InteractionResult.SUCCESS
 			} else {
-				ActionResult.PASS
+				InteractionResult.PASS
 			}
 		}
-		PlayerConnectCallback.EVENT.register { _, player ->
+		PlayerConnectCallback.EVENT.register { player ->
 			customScope.launch {
 				var incomeTotal = 0.0
 				shopDBService.dbQueryAsync {
-					shopDBService.readByOwner(player.nameForScoreboard, player.registryManager).forEach {
+					shopDBService.readByOwner(player.scoreboardName, player.registryAccess()).forEach {
 						incomeTotal += it.income
 						it.income = 0.0
 						shopDBService.update(it)
@@ -116,9 +116,9 @@ class VillagerShopMain : ModInitializer {
 				}
 
 				if (incomeTotal != 0.0) {
-					player.server.execute {
+					player.level().server.execute {
 						EconomyData(player).addMoney((incomeTotal * 100).toLong())
-						player.sendMessage(tr("commands.balance.add", incomeTotal.toLong()))
+						player.sendSystemMessage(tr("commands.balance.add", incomeTotal.toLong()))
 					}
 				}
 			}
@@ -133,16 +133,16 @@ class VillagerShopMain : ModInitializer {
 		val CONFIG: ModConfig = ModConfig()
 		val itemList: MutableList<ItemManager> = mutableListOf()
 		val guiSet: ConcurrentHashMap.KeySetView<Any, Boolean> = ConcurrentHashMap.newKeySet()
-		val shopEntityList: MutableMap<Int, VillagerEntity> = mutableMapOf()
+		val shopEntityList: MutableMap<Int, Villager> = mutableMapOf()
         lateinit var shopDBService: ShopService
             private set
-        lateinit var registryAccess: CommandRegistryAccess
+        lateinit var registryAccess: CommandBuildContext
             private set
 	}
 
 	private fun purchaseItemLoad(server: MinecraftServer): MutableList<ItemManager> {
 		val itemList: MutableList<ItemManager> = mutableListOf()
-		for (i in shopDBService.readByType(server.registryManager,
+		for (i in shopDBService.readByType(server.registryAccess(),
 			listOf(ShopService.Companion.ShopType.REFRESHABLE_BUY, ShopService.Companion.ShopType.UNLIMITED_BUY))
 		) {
 			itemList.addAll(i.items)
@@ -150,11 +150,11 @@ class VillagerShopMain : ModInitializer {
 		return itemList
 	}
 
-	private fun containGui(villager: VillagerEntity): Boolean {
+	private fun containGui(villager: Villager): Boolean {
 		return guiSet.contains(villager)
 	}
 
-	private fun scheduleDailyTask(registries: RegistryWrapper.WrapperLookup) {
+	private fun scheduleDailyTask(registries: HolderLookup.Provider) {
 
 		val midnightTask = Runnable {
 			// Reset daily limit

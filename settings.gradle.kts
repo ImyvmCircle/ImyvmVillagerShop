@@ -17,6 +17,6 @@ pluginManagement {
 
     plugins {
         id("org.jetbrains.kotlin.jvm") version settings["kotlin_version"]
-        id("fabric-loom") version settings["loom_version"]
+        id("net.fabricmc.fabric-loom") version settings["loom_version"]
     }
 }

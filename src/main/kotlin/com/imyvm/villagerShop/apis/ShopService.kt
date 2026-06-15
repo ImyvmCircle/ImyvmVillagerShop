@@ -3,20 +3,28 @@ package com.imyvm.villagerShop.apis
 import com.imyvm.villagerShop.VillagerShopMain.Companion.LOGGER
 import com.imyvm.villagerShop.VillagerShopMain.Companion.shopDBService
 import com.imyvm.villagerShop.apis.Translator.tr
+import com.imyvm.villagerShop.items.ItemManager
 import com.imyvm.villagerShop.items.ItemManager.Companion.restoreItemList
 import com.imyvm.villagerShop.items.ItemManager.Companion.storeItemList
 import com.imyvm.villagerShop.shops.ShopEntity
 import com.imyvm.villagerShop.shops.ShopEntity.Companion.sendMessageByType
 import com.mojang.brigadier.context.CommandContext
+import com.mojang.serialization.JsonOps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import net.minecraft.registry.RegistryWrapper
+import kotlinx.serialization.json.*
+import net.minecraft.commands.CommandSourceStack
+import net.minecraft.core.HolderLookup
+import net.minecraft.nbt.NbtOps
+import net.minecraft.nbt.TagParser
 import net.minecraft.server.MinecraftServer
-import net.minecraft.server.command.ServerCommandSource
+import net.minecraft.world.item.ItemStack
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 class ShopService(private val database: Database, private val server: MinecraftServer) {
@@ -46,7 +54,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
     }
 
-    private fun createShopEntity(resultRow: ResultRow, registries: RegistryWrapper.WrapperLookup): ShopEntity {
+    private fun createShopEntity(resultRow: ResultRow, registries: HolderLookup.Provider): ShopEntity {
         return ShopEntity(
             resultRow[Shops.id].value,
             resultRow[Shops.shopname],
@@ -87,7 +95,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }[Shops.id].value
     }
 
-    fun readById(id: Int, registries: RegistryWrapper.WrapperLookup): ShopEntity? = dbQuery {
+    fun readById(id: Int, registries: HolderLookup.Provider): ShopEntity? = dbQuery {
         Shops.selectAll()
             .where { Shops.id eq id }
             .map {
@@ -97,7 +105,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
     fun readByShopName(shopName: String,
                        playerName: String = "",
-                       registries: RegistryWrapper.WrapperLookup
+                       registries: HolderLookup.Provider
     ): List<ShopEntity?> = dbQuery {
         val condition = if (playerName != "") {
             Shops.selectAll()
@@ -111,7 +119,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
     }
 
-    fun readByOwner(playerName: String, registries: RegistryWrapper.WrapperLookup): List<ShopEntity> = dbQuery {
+    fun readByOwner(playerName: String, registries: HolderLookup.Provider): List<ShopEntity> = dbQuery {
         Shops.selectAll()
             .where { Shops.owner eq playerName }
             .map {
@@ -122,7 +130,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
     fun readByLocation(
         pos: String,
         rangeX: Int, rangeY: Int, rangeZ: Int, world: String,
-        registries: RegistryWrapper.WrapperLookup
+        registries: HolderLookup.Provider
     ): List<ShopEntity> = dbQuery {
         val (x, y, z) = pos.split(",").map { it.toInt() }
         Shops.selectAll()
@@ -135,7 +143,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             }
     }
 
-    fun readByType(registries: RegistryWrapper.WrapperLookup, shopTypes: List<ShopType>): List<ShopEntity> = dbQuery {
+    fun readByType(registries: HolderLookup.Provider, shopTypes: List<ShopType>): List<ShopEntity> = dbQuery {
         Shops.selectAll()
             .where { Shops.type inList shopTypes.map { it.ordinal } }
             .map {
@@ -168,6 +176,27 @@ class ShopService(private val database: Database, private val server: MinecraftS
         DataBaseInfo.selectAll().maxByOrNull { it[DataBaseInfo.dbVersion] }?.get(DataBaseInfo.dbVersion) ?: 0
     }
 
+    private fun backupShopsTableBeforeMigration(): String {
+        // 1. 生成带时间戳的唯一备份表名（例如：imyvm_shops_bak_20260613_201530）
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+        val backupTableName = "${Shops.tableName}_bak_$timestamp"
+
+        try {
+            // 2. 开启一个独立的事务来做备份
+            transaction {
+                // 标准 SQL：创建新表并全量复制数据
+                val sql = "CREATE TABLE $backupTableName AS SELECT * FROM ${Shops.tableName}"
+                exec(sql)
+            }
+            LOGGER.info("[ImyvmVillagerShop] 数据库备份成功！临时快照表已建立: $backupTableName")
+            return backupTableName
+        } catch (e: Exception) {
+            LOGGER.error("[ImyvmVillagerShop] 致命错误：迁移前的自动备份失败！", e)
+            LOGGER.error("[ImyvmVillagerShop] 为防止数据损坏，已强行熔断并中止数据迁移流程！")
+            throw e
+        }
+    }
+
     private fun applyMigration(version: Int, migrationName: String, migration: () -> Unit) = dbQuery {
         val exists = DataBaseInfo.selectAll()
             .where { DataBaseInfo.dbVersion eq version }
@@ -187,12 +216,33 @@ class ShopService(private val database: Database, private val server: MinecraftS
 
     private fun applyMigrations() {
         val currentVersion = getCurrentDbVersion()
-        if (currentVersion < 1) {
-            applyMigration(1, "Add ownerUUID column") {
-                migrateToAddOwnerUUID()
-            }
+        val targetVersion = 2
+        if (currentVersion >= targetVersion) {
+            LOGGER.info("[ImyvmVillagerShop] 数据库已是最新版本 ($currentVersion)，无需迁移。")
+            return
         }
-        // Add future migrations here
+        val backupTable = backupShopsTableBeforeMigration()
+        try {
+            if (currentVersion < 1) {
+                applyMigration(1, "Add ownerUUID column") {
+                    migrateToAddOwnerUUID()
+                }
+            }
+            if (currentVersion < 2) {
+                applyMigration(2, "Migrate ItemManager serialization from NBT string to JSON elements") {
+                    migrateToJsonElements()
+                }
+            }
+            // Add future migrations here
+
+        } catch (e: Exception) {
+            LOGGER.error("[ImyvmVillagerShop] 数据库迁移过程中发生致命异常！数据可能已损坏！", e)
+            LOGGER.error("[ImyvmVillagerShop] 请通过 Navicat 或数据库控制台执行以下两条 SQL 来完全恢复原状：")
+            LOGGER.error("    DROP TABLE ${Shops.tableName};")
+            LOGGER.error("    ALTER TABLE $backupTable RENAME TO ${Shops.tableName};")
+
+            throw e // 强行抛出，阻止插件继续加载，防止脏数据在服务器运行时扩散
+        }
     }
 
     private fun migrateToAddOwnerUUID() {
@@ -211,7 +261,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             LOGGER.info("[ImyvmVillagerShop] Migrating ${allShops.size} shops to add ownerUUID")
 
             allShops.forEach { (id, playerName) ->
-                val playerUUID = server.userCache?.findByName(playerName)?.get()?.id ?: UUID.fromString("00000000-0000-4000-8000-000000000000")
+                val playerUUID = server.services().nameToIdCache().get(playerName).map { it.id }.orElse(UUID.fromString("00000000-0000-4000-8000-000000000000"))
                 Shops.update({ Shops.id eq id }) {
                     it[ownerUUID] = playerUUID
                 }
@@ -221,6 +271,46 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
     }
 
+    private fun migrateToJsonElements() {
+        val allShops = Shops.selectAll().map { row ->
+            row[Shops.id].value to row[Shops.items]
+        }
+
+        LOGGER.info("[ImyvmVillagerShop] Migrating ${allShops.size} shops to JSON elements for items")
+
+        val itemDataJson = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+        }
+
+        allShops.forEach { (id, itemsString) ->
+            val outerList = Json.decodeFromString<List<String>>(itemsString)
+            val migratedInnerStrings = outerList.map { innerJsonStr ->
+                val jsonObject = Json.parseToJsonElement(innerJsonStr).jsonObject
+                val mutableMap = jsonObject.toMutableMap().apply {
+                    val oldNbtString = this["itemNbt"]?.jsonPrimitive?.content ?: return@apply
+                    val nbtOps = server.registryAccess().createSerializationContext(NbtOps.INSTANCE)
+                    val nbt = TagParser.parseCompoundFully(oldNbtString)
+                    val itemStack = ItemStack.CODEC.parse(nbtOps, nbt).getOrThrow()
+                    val jsonOps = server.registryAccess().createSerializationContext(JsonOps.INSTANCE)
+                    val gsonElement = ItemStack.CODEC.encodeStart(jsonOps, itemStack).getOrThrow()
+                    val newItemsElement = itemDataJson.parseToJsonElement(gsonElement.toString())
+                    remove("itemNbt")
+                    put("itemStackJsonElement", newItemsElement)
+                }
+                val migratedObject = JsonObject(mutableMap)
+                val verifiedNewConfig = Json.decodeFromJsonElement<ItemManager.ItemData>(migratedObject)
+                Json.encodeToString(verifiedNewConfig)
+            }
+
+            Shops.update({ Shops.id eq id }) {
+                it[items] = Json.encodeToString(migratedInnerStrings)
+            }
+        }
+
+        LOGGER.info("[ImyvmVillagerShop] Migration to JSON elements for items completed")
+    }
+
     companion object {
 
         enum class ShopType {
@@ -228,12 +318,12 @@ class ShopService(private val database: Database, private val server: MinecraftS
         }
 
         fun rangeSearch(
-            context: CommandContext<ServerCommandSource>,
+            context: CommandContext<CommandSourceStack>,
             searchCondition: String,
         ): Int {
             val player = context.source.player!!
             val results = mutableListOf<ShopEntity?>()
-            val registries = context.source.registryManager
+            val registries = context.source.registryAccess()
             for (i in searchCondition.split(" ")) {
                 if (i.contains(":")) {
                     val (condition, parameter) = i.split(":", limit = 2)
@@ -241,22 +331,22 @@ class ShopService(private val database: Database, private val server: MinecraftS
                         "id" -> mutableListOf(shopDBService.readById(parameter.toInt(), registries))
                         "shopname" -> shopDBService.readByShopName(parameter, registries = registries)
                         "owner" -> shopDBService.readByOwner(parameter, registries)
-                        "location" -> shopDBService.readByLocation(parameter, 0, 0, 0, player.world.asString(), registries)
+                        "location" -> shopDBService.readByLocation(parameter, 0, 0, 0, player.level().dimension().identifier().toString(), registries)
                         "range" -> {
                             val (rangeX,rangeY,rangeZ) = parameter.split(",").map {it.toInt()}
                             shopDBService.readByLocation(
-                                "${player.pos.x},${player.pos.y},${player.pos.z}",
-                                rangeX, rangeY, rangeZ ,player.world.asString(), registries)
+                                "${player.position().x},${player.position().y},${player.position().z}",
+                                rangeX, rangeY, rangeZ ,player.level().dimension().identifier().toString(), registries)
                         }
                         else -> mutableListOf()
                     }
                     if (!results.containsAll(temp)) results.addAll(temp)
                 } else {
-                    player.sendMessage(tr("commands.range.search.failed", i))
+                    player.sendSystemMessage(tr("commands.range.search.failed", i))
                 }
             }
             if (results.isEmpty()) {
-                player.sendMessage(tr("commands.search.none"))
+                player.sendSystemMessage(tr("commands.search.none"))
                 return -1
             }
             for (shop in results) {
@@ -265,7 +355,7 @@ class ShopService(private val database: Database, private val server: MinecraftS
             return 1
         }
 
-        fun resetRefreshableSellAndBuy(registries: RegistryWrapper.WrapperLookup) {
+        fun resetRefreshableSellAndBuy(registries: HolderLookup.Provider) {
             shopDBService.readByType(registries, listOf(ShopType.UNLIMITED_BUY, ShopType.REFRESHABLE_BUY,
                 ShopType.REFRESHABLE_SELL)).forEach { shop ->
                 shop.items.forEach { item ->

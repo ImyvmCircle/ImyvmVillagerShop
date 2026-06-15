@@ -2,32 +2,32 @@ package com.imyvm.villagerShop.gui
 
 import eu.pb4.sgui.api.elements.GuiElementBuilder
 import eu.pb4.sgui.api.gui.SimpleGui
-import net.minecraft.item.Items
-import net.minecraft.text.Text
+import net.minecraft.network.chat.Component
+import net.minecraft.world.item.Items
 
 // ─── Shared GUI layout helpers used by ShopCreateGui and ShopManageGui ───────
 
 internal fun glassPane(color: Int = 7): GuiElementBuilder {
     val item = when (color) {
-        0  -> Items.WHITE_STAINED_GLASS_PANE
-        1  -> Items.ORANGE_STAINED_GLASS_PANE
-        2  -> Items.MAGENTA_STAINED_GLASS_PANE
-        3  -> Items.LIGHT_BLUE_STAINED_GLASS_PANE
-        4  -> Items.YELLOW_STAINED_GLASS_PANE
-        5  -> Items.LIME_STAINED_GLASS_PANE
-        6  -> Items.PINK_STAINED_GLASS_PANE
-        7  -> Items.GRAY_STAINED_GLASS_PANE
-        8  -> Items.LIGHT_GRAY_STAINED_GLASS_PANE
-        9  -> Items.CYAN_STAINED_GLASS_PANE
-        10 -> Items.PURPLE_STAINED_GLASS_PANE
-        11 -> Items.BLUE_STAINED_GLASS_PANE
-        12 -> Items.BROWN_STAINED_GLASS_PANE
-        13 -> Items.GREEN_STAINED_GLASS_PANE
-        14 -> Items.RED_STAINED_GLASS_PANE
-        15 -> Items.BLACK_STAINED_GLASS_PANE
-        else -> Items.GRAY_STAINED_GLASS_PANE
+        0  -> Items.STAINED_GLASS_PANE.white
+        1  -> Items.STAINED_GLASS_PANE.orange
+        2  -> Items.STAINED_GLASS_PANE.magenta
+        3  -> Items.STAINED_GLASS_PANE.lightBlue
+        4  -> Items.STAINED_GLASS_PANE.yellow
+        5  -> Items.STAINED_GLASS_PANE.lime
+        6  -> Items.STAINED_GLASS_PANE.pink
+        7  -> Items.STAINED_GLASS_PANE.gray
+        8  -> Items.STAINED_GLASS_PANE.lightGray
+        9  -> Items.STAINED_GLASS_PANE.cyan
+        10 -> Items.STAINED_GLASS_PANE.purple
+        11 -> Items.STAINED_GLASS_PANE.blue
+        12 -> Items.STAINED_GLASS_PANE.brown
+        13 -> Items.STAINED_GLASS_PANE.green
+        14 -> Items.STAINED_GLASS_PANE.red
+        15 -> Items.STAINED_GLASS_PANE.black
+        else -> Items.STAINED_GLASS_PANE.gray
     }
-    return GuiElementBuilder(item).setName(Text.literal(" "))
+    return GuiElementBuilder(item).setName(Component.literal(" "))
 }
 
 /** Fills the outer border of a [rows]×9 GUI with grey glass panes. */

@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         # Use these Java versions
-        java: [22]  # Current Java LTS & minimum supported by Minecraft
+        java: [25]  # Current Java LTS & minimum supported by Minecraft
         # and run on both Linux and Windows
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -38,7 +38,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: capture build artifacts
-        if: ${{ runner.os == 'Linux' && matrix.java == '22' }} # Only upload artifacts built from latest java on one OS
+        if: ${{ runner.os == 'Linux' && matrix.java == '25' }} # Only upload artifacts built from latest java on one OS
         uses: actions/upload-artifact@v4
         with:
           name: Artifacts

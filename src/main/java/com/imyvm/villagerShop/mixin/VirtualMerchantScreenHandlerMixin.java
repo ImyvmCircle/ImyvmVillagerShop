@@ -3,15 +3,13 @@ package com.imyvm.villagerShop.mixin;
 import com.imyvm.economy.EconomyMod;
 import com.imyvm.villagerShop.apis.Translator;
 import eu.pb4.sgui.api.gui.MerchantGui;
-import eu.pb4.sgui.virtual.merchant.VirtualMerchant;
-import eu.pb4.sgui.virtual.merchant.VirtualMerchantScreenHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.Identifier;
-import net.minecraft.village.MerchantInventory;
+import eu.pb4.sgui.impl.virtual.merchant.VirtualMerchant;
+import eu.pb4.sgui.impl.virtual.merchant.VirtualMerchantScreenHandler;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Items;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.inventory.MerchantContainer;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -21,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(VirtualMerchantScreenHandler.class)
 public abstract class VirtualMerchantScreenHandlerMixin {
-    @Shadow @Final private MerchantInventory merchantInventory;
+    @Shadow @Final private MerchantContainer merchantInventory;
 
     @Shadow(remap = false) public abstract MerchantGui getGui();
 
@@ -29,43 +27,30 @@ public abstract class VirtualMerchantScreenHandlerMixin {
 
     @Inject(method = "selectNewTrade", at = @At("HEAD"), cancellable = true, remap = false)
     private void selectNewTrade(int tradeIndex, CallbackInfo ci) {
-        this.merchantInventory.setOfferIndex(tradeIndex);
+        this.merchantInventory.setSelectionHint(tradeIndex);
         this.getGui().onSelectTrade(this.merchant.getOffers().get(tradeIndex));
-        this.merchantInventory.removeStack(0);
-        this.merchantInventory.removeStack(1);
+//        this.merchantInventory.removeItem(0);
+//        this.merchantInventory.removeItem(1);
+        this.merchantInventory.clearContent();
 
-        if (this.merchant.getOffers().size() > tradeIndex && this.merchant.getOffers().get(tradeIndex).getFirstBuyItem().item().value() == Items.BAMBOO) {
-            var imyvmCurry = this.merchant.getOffers().get(tradeIndex).getFirstBuyItem().itemStack();
-            this.merchantInventory.setStack(0, imyvmCurry);
-            var customData = imyvmCurry.get(DataComponentTypes.CUSTOM_DATA);
-            if (customData != null && customData.contains("securityCode")) {
-                var moneyShouldTake = imyvmCurry.get(DataComponentTypes.DAMAGE);
+        if (this.merchant.getOffers().size() > tradeIndex && this.merchant.getOffers().get(tradeIndex).getCostA().getItem() == Items.BAMBOO) {
+            var imyvmCurry = this.merchant.getOffers().get(tradeIndex).getCostA();
+//            this.merchantInventory.setStack(0, imyvmCurry);
+            this.merchantInventory.setItem(0, imyvmCurry);
+            var customData = imyvmCurry.get(DataComponents.CUSTOM_DATA);
+            if (customData != null && customData.copyTag().contains("securityCode")) {
+                var moneyShouldTake = imyvmCurry.get(DataComponents.DAMAGE);
                 var player = this.getGui().getPlayer();
                 var playerBalance = EconomyMod.data.getOrCreate(player).getMoney();
-                if (moneyShouldTake != null && playerBalance < moneyShouldTake * 100) {
-                    var barrierItem = Registries.ITEM.getOrEmpty(Identifier.tryParse("minecraft:barrier")).orElseThrow();
-                    var barrierItemStack = barrierItem.getDefaultStack();
-                    barrierItemStack.set(DataComponentTypes.CUSTOM_NAME, Translator.INSTANCE.tr("shop.buy.money.lack"));
-                    barrierItemStack.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true);
-                    this.merchantInventory.setStack(1, barrierItemStack);
+                if (moneyShouldTake != null && playerBalance < moneyShouldTake * 100L) {
+                    var barrierItem = Items.BARRIER;
+                    var barrierItemStack = barrierItem.getDefaultInstance();
+                    barrierItemStack.set(DataComponents.CUSTOM_NAME, Translator.INSTANCE.tr("shop.buy.money.lack"));
+                    barrierItemStack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);
+                    this.merchantInventory.setItem(1, barrierItemStack);
                 }
             }
             ci.cancel();
         }
     }
-
-    @Inject(method = "onClosed", at = @At(value = "INVOKE", target = "net/minecraft/entity/player/PlayerEntity.getWorld ()Lnet/minecraft/world/World;"), cancellable = true)
-    private void onClosed(PlayerEntity playerEntity, CallbackInfo ci) {
-        if (!playerEntity.getWorld().isClient && playerEntity instanceof ServerPlayerEntity) {
-            var firstItemStack = this.merchantInventory.getStack(0);
-            var firstItemStackCustomData = firstItemStack.get(DataComponentTypes.CUSTOM_DATA);
-            if (firstItemStack.getItem() == Items.BAMBOO && firstItemStackCustomData != null && firstItemStackCustomData.contains("securityCode")) {
-                this.merchantInventory.removeStack(0);
-                this.merchantInventory.removeStack(1);
-                this.merchantInventory.removeStack(2);
-                ci.cancel();
-            }
-        }
-    }
-
 }
